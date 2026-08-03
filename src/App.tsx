@@ -63,6 +63,7 @@ export function App() {
   const [authLoading, setAuthLoading] = useState(isSupabaseConfigured)
   const [menuOpen, setMenuOpen] = useState(false)
   const [signInOpen, setSignInOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [eras, setEras] = useState<Era[]>(ERAS)
   const [focusedFilm, setFocusedFilm] = useState(1)
@@ -284,7 +285,7 @@ export function App() {
           {member?.role === 'admin' && <button className={page === 'admin' ? 'active' : ''} onClick={() => { go('admin'); void loadModerationQueue() }}><ShieldCheck size={16} />Control room</button>}
         </nav>
         <div className="topbar-actions">
-          {authLoading ? <LoaderCircle className="spin" size={18} /> : member ? <button className="member-pill" onClick={logout} title="Sign out"><span className="avatar">{member.displayName.slice(0, 1)}</span><span><b>{member.handle}</b><small><Sparkles size={12} /> {formatNumber(member.ledger)}</small></span></button> : <button className="sign-in" onClick={() => setSignInOpen(true)}>Sign in <ArrowRight size={16} /></button>}
+          {authLoading ? <LoaderCircle className="spin" size={18} /> : member ? <button className="member-pill" onClick={() => setProfileOpen(true)} title="Open your profile"><span className="avatar">{member.displayName.slice(0, 1)}</span><span><b>{member.handle}</b><small><Sparkles size={12} /> {formatNumber(member.ledger)}</small></span></button> : <button className="sign-in" onClick={() => setSignInOpen(true)}>Sign in <ArrowRight size={16} /></button>}
           <button className="menu-button" onClick={() => setMenuOpen((value) => !value)} aria-label="Open navigation">{menuOpen ? <X /> : <Menu />}</button>
         </div>
       </header>
@@ -293,7 +294,7 @@ export function App() {
         {page === 'home' && <Home onBrowse={() => go('archive')} onOpenFilm={openFilm} onWrite={() => void openWriter(1)} />}
         {page === 'archive' && <Archive films={allFilms} search={archiveSearch} setSearch={setArchiveSearch} eraFilter={eraFilter} setEraFilter={setEraFilter} onOpenFilm={openFilm} />}
         {page === 'timeline' && <Timeline eras={eras} focus={timelineFocus} setFocus={setTimelineFocus} onOpenFilm={openFilm} />}
-        {page === 'film' && <FilmPage film={currentFilm} stories={stories} loading={filmLoading} onBack={() => go('archive')} onWrite={() => void openWriter()} onReact={reactToStory} onBookmark={bookmarkStory} />}
+        {page === 'film' && <FilmPage film={currentFilm} stories={stories} loading={filmLoading} onBack={() => go('archive')} onOpenFilm={openFilm} onWrite={() => void openWriter()} onReact={reactToStory} onBookmark={bookmarkStory} />}
         {page === 'write' && <WritingStudio film={currentFilm} draft={draft} setDraft={setDraft} previewing={previewing} setPreviewing={setPreviewing} saving={draftSaving} onSave={() => void saveDraft()} onSubmit={() => void submitDraft()} onBack={() => go('film')} onFormat={insertMarkdown} />}
         {page === 'admin' && <AdminRoom member={member} eras={eras} setEras={setEras} queue={adminQueue} onModerate={moderate} notify={notify} />}
       </main>
@@ -301,6 +302,7 @@ export function App() {
       <footer className="footer"><span>800 films about one unpaid bill.</span><span>Written by the people keeping the record.</span></footer>
       {toast && <div className="toast"><Check size={16} />{toast}</div>}
       {signInOpen && <SignInSheet close={() => setSignInOpen(false)} login={login} />}
+      {profileOpen && member && <ProfileSheet member={member} close={() => setProfileOpen(false)} logout={logout} />}
     </div>
   )
 }
@@ -343,21 +345,45 @@ function Archive({ films, search, setSearch, eraFilter, setEraFilter, onOpenFilm
 
 function Timeline({ eras, focus, setFocus, onOpenFilm }: { eras: Era[]; focus: string | null; setFocus: (value: string | null) => void; onOpenFilm: (number: number) => void }) {
   const active = eras.find((era) => era.slug === focus)
+  const scrollArea = useRef<HTMLDivElement>(null)
+  const drag = useRef({ startX: 0, scrollLeft: 0, moved: false })
+  function beginDrag(event: React.PointerEvent<HTMLDivElement>) {
+    const element = scrollArea.current
+    if (!element) return
+    drag.current = { startX: event.clientX, scrollLeft: element.scrollLeft, moved: false }
+    element.setPointerCapture(event.pointerId)
+    element.classList.add('dragging')
+  }
+  function dragTimeline(event: React.PointerEvent<HTMLDivElement>) {
+    const element = scrollArea.current
+    if (!element || !element.hasPointerCapture(event.pointerId)) return
+    const distance = event.clientX - drag.current.startX
+    if (Math.abs(distance) > 4) drag.current.moved = true
+    element.scrollLeft = drag.current.scrollLeft - distance
+  }
+  function endDrag(event: React.PointerEvent<HTMLDivElement>) {
+    const element = scrollArea.current
+    if (!element) return
+    if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId)
+    element.classList.remove('dragging')
+    window.setTimeout(() => { drag.current.moved = false }, 0)
+  }
   return <section className="timeline-page section-wrap">
     <div className="timeline-heading"><div><p className="eyebrow"><span /> Continuity map</p><h1>How the <i>series fits together.</i></h1><p>Each era has its own brief. The administrator can adjust the map as the community develops the story.</p></div><div className="timeline-key"><span><i className="dot canon" />Canon</span><span><i className="dot challenger" />Open challenge</span><span><i className="dot unclaimed" />Awaiting story</span></div></div>
-    <div className="ledger-graph" aria-label="800 movie timeline"><div className="graph-axis"><span>#001</span><span>#100</span><span>#200</span><span>#300</span><span>#400</span><span>#500</span><span>#600</span><span>#700</span><span>#800</span></div><div className="era-lanes">{eras.map((era, index) => <button key={era.slug} className={classNames('era-lane', focus === era.slug && 'focused')} style={{ '--era-colour': era.accent, '--start': era.start_movie, '--length': era.end_movie - era.start_movie + 1, '--lane': index } as React.CSSProperties} onClick={() => setFocus(focus === era.slug ? null : era.slug)}><span>{era.name}</span><small>{era.start_movie}—{era.end_movie}</small></button>)}</div><div className="graph-marks">{[1, 30, 40, 41, 220, 300, 800].map((number) => <button key={number} style={{ left: `${((number - 1) / 799) * 100}%` }} onClick={() => onOpenFilm(number)}><i /><span>#{number}</span></button>)}</div></div>
+    <div className="timeline-graph-note"><span>Drag to explore the full 800-film record.</span><div><button onClick={() => scrollArea.current?.scrollTo({ left: 0, behavior: 'smooth' })}>Start</button><button onClick={() => scrollArea.current?.scrollTo({ left: scrollArea.current.scrollWidth, behavior: 'smooth' })}>End</button></div></div>
+    <div ref={scrollArea} className="ledger-scroll" onPointerDown={beginDrag} onPointerMove={dragTimeline} onPointerUp={endDrag} onPointerCancel={endDrag}><div className="ledger-graph" aria-label="800 movie timeline"><div className="graph-axis"><span>#001</span><span>#100</span><span>#200</span><span>#300</span><span>#400</span><span>#500</span><span>#600</span><span>#700</span><span>#800</span></div><div className="era-lanes">{eras.map((era, index) => <button key={era.slug} className={classNames('era-lane', focus === era.slug && 'focused')} style={{ '--era-colour': era.accent, '--start': era.start_movie, '--length': era.end_movie - era.start_movie + 1, '--lane': index } as React.CSSProperties} onClick={() => { if (!drag.current.moved) setFocus(focus === era.slug ? null : era.slug) }}><span className="era-lane-label"><b>{era.name}</b><small>#{era.start_movie}–#{era.end_movie}</small></span></button>)}</div><div className="graph-marks">{[1, 30, 40, 41, 220, 300, 800].map((number) => <button key={number} style={{ left: `${((number - 1) / 799) * 100}%` }} onClick={() => { if (!drag.current.moved) onOpenFilm(number) }}><i /><span>#{number}</span></button>)}</div></div></div>
     <div className="timeline-detail">{active ? <><span className="era-swatch" style={{ background: active.accent }} /><div><p className="eyebrow">#{active.start_movie}–#{active.end_movie}</p><h2>{active.name}</h2><p>{active.description}</p></div><aside><b>Writer’s brief</b><p>{active.writing_guidelines}</p><button className="text-button" onClick={() => onOpenFilm(active.start_movie)}>Open first film <ArrowRight size={15} /></button></aside></> : <><Grid3X3 size={28} /><div><h2>Select an era to read its writing notes.</h2><p>The map can change when the story needs it to.</p></div></>}</div>
     <div className="timeline-callout"><div><Sparkles /><h2>Grothkin starts at <i>movie #220.</i></h2><p>From there, the countdown is tied to old records, old promises, and an accounts department that should have stayed ordinary.</p></div><button className="button ghost" onClick={() => onOpenFilm(220)}>Open Grothkin Lore <ArrowRight size={16} /></button></div>
   </section>
 }
 
-function FilmPage({ film, stories, loading, onBack, onWrite, onReact, onBookmark }: { film: Film; stories: Story[]; loading: boolean; onBack: () => void; onWrite: () => void; onReact: (story: Story, value: 1 | -1) => void; onBookmark: (story: Story) => void }) {
+function FilmPage({ film, stories, loading, onBack, onOpenFilm, onWrite, onReact, onBookmark }: { film: Film; stories: Story[]; loading: boolean; onBack: () => void; onOpenFilm: (number: number) => void; onWrite: () => void; onReact: (story: Story, value: 1 | -1) => void; onBookmark: (story: Story) => void }) {
   const canon = stories.find((story) => story.status === 'canon')
   const challengers = stories.filter((story) => story.status === 'challenger')
   return <section className="film-page section-wrap">
-    <button className="back-button" onClick={onBack}><ArrowLeft size={16} /> Archive</button>
+    <div className="film-page-nav"><button className="back-button" onClick={onBack}><ArrowLeft size={16} /> Archive</button><div className="film-switcher" aria-label="Browse adjacent films">{film.number > 1 ? <button onClick={() => onOpenFilm(film.number - 1)}><ArrowLeft size={17} /><span><small>Previous film</small><b>#{String(film.number - 1).padStart(3, '0')} · {titleForFilm(film.number - 1)}</b></span></button> : <span className="film-switcher-edge">Beginning of the record</span>}<span className="film-switcher-count">{film.number} / 800</span>{film.number < 800 ? <button onClick={() => onOpenFilm(film.number + 1)}><span><small>Next film</small><b>#{String(film.number + 1).padStart(3, '0')} · {titleForFilm(film.number + 1)}</b></span><ArrowRight size={17} /></button> : <span className="film-switcher-edge">Paid in full</span>}</div></div>
     <div className="film-hero" style={{ '--era-colour': film.era.accent } as React.CSSProperties}><div className="film-label"><span>Movie</span><b>#{String(film.number).padStart(3, '0')}</b></div><div className="film-hero-copy"><p className="eyebrow"><span /> {film.era.name}</p><h1>{film.title}</h1><p>{film.official_description}</p><div className="film-tags"><span>{film.era.start_movie}–{film.era.end_movie} era</span><span>~2h runtime</span><span>Open archive</span></div></div><button className="button primary" onClick={onWrite}><PenLine size={17} />{canon ? 'Challenge canon' : 'Write the first story'}</button></div>
-    <div className="film-layout"><aside className="continuity-card"><p className="eyebrow">Continuity</p><div><small>Before</small><b>#{film.number === 1 ? '—' : film.number - 1}</b><span>{film.number === 1 ? 'No earlier film.' : titleForFilm(film.number - 1)}</span></div><div className="current"><small>Now</small><b>#{film.number}</b><span>{film.title}</span></div><div><small>After</small><b>#{film.number === 800 ? '—' : film.number + 1}</b><span>{film.number === 800 ? 'The series ends here.' : titleForFilm(film.number + 1)}</span></div><hr /><p>{film.era.writing_guidelines}</p></aside>
+    <div className="film-layout"><aside className="continuity-card"><p className="eyebrow">Continuity</p>{film.number > 1 ? <button onClick={() => onOpenFilm(film.number - 1)}><small>Before</small><b>#{film.number - 1}</b><span>{titleForFilm(film.number - 1)}</span></button> : <div><small>Before</small><b>#—</b><span>No earlier film.</span></div>}<div className="current"><small>Now</small><b>#{film.number}</b><span>{film.title}</span></div>{film.number < 800 ? <button onClick={() => onOpenFilm(film.number + 1)}><small>After</small><b>#{film.number + 1}</b><span>{titleForFilm(film.number + 1)}</span></button> : <div><small>After</small><b>#—</b><span>The series ends here.</span></div>}<hr /><p>{film.era.writing_guidelines}</p></aside>
       <div className="story-column">{loading ? <div className="loading-card"><LoaderCircle className="spin" />Loading film…</div> : canon ? <StoryCard story={canon} featured onReact={onReact} onBookmark={onBookmark} /> : <EmptyCanon film={film} onWrite={onWrite} />}{challengers.length > 0 && <section className="challenge-stack"><div className="stack-heading"><div><p className="eyebrow"><span /> Current vote</p><h2>Canon is being challenged.</h2></div><span className="vote-window">6d 18h remaining</span></div>{challengers.map((story) => <StoryCard key={story.id} story={story} challenge onReact={onReact} onBookmark={onBookmark} />)}</section>}<section className="archive-note"><LockKeyhole size={17} /><div><b>Nothing is deleted.</b><p>Stories that do not become canon remain available with their revision history.</p></div></section></div>
     </div>
   </section>
@@ -391,3 +417,7 @@ function AdminRoom({ member, eras, setEras, queue, onModerate, notify }: { membe
 }
 
 function SignInSheet({ close, login }: { close: () => void; login: () => void }) { return <div className="modal-backdrop" role="presentation" onMouseDown={close}><section className="sign-in-sheet" role="dialog" aria-modal="true" aria-label="Sign in" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><span className="brand-mark">A</span><p className="eyebrow"><span /> Reader account</p><h2>Join the<br /><i>archive.</i></h2><p>Sign in to write stories, vote on challenges, and keep track of the films you care about.</p><button className="google-button" onClick={login}><b>G</b> Continue with Google</button>{!isSupabaseConfigured && <p className="config-note"><LockKeyhole size={14} /> Add the Supabase URL and publishable key from <code>.env.example</code> to enable Google sign-in.</p>}<small>You can read everything without an account. Sign in when you want to contribute.</small></section></div> }
+
+function ProfileSheet({ member, close, logout }: { member: Member; close: () => void; logout: () => void }) {
+  return <div className="modal-backdrop" role="presentation" onMouseDown={close}><section className="profile-sheet" role="dialog" aria-modal="true" aria-label="Your profile" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><div className="profile-heading"><span className="profile-avatar">{member.displayName.slice(0, 1)}</span><div><p className="eyebrow"><span /> Your account</p><h2>{member.displayName}</h2><p>@{member.handle}</p></div></div><div className="profile-stats"><div><small>Ledger balance</small><b><Sparkles size={15} /> {formatNumber(member.ledger)}</b></div><div><small>Archive role</small><b>{member.role === 'admin' ? 'Administrator' : member.role === 'moderator' ? 'Moderator' : 'Writer'}</b></div></div><p className="profile-note">Your account keeps your drafts, votes, and stories tied to the archive. You can read without signing in; signing out only affects this device.</p><button className="profile-logout" onClick={() => { close(); void logout() }}>Sign out <ArrowRight size={16} /></button></section></div>
+}
