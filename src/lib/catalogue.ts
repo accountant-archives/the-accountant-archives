@@ -18,12 +18,12 @@ export type Film = {
 }
 
 export const ERAS: Era[] = [
-  { name: 'Debt Collection', slug: 'debt-collection', description: 'One accountant, one debtor, and a balance that should have been settled before the opening credits.', writing_guidelines: 'Keep it grounded: offices, calls, notices, and a pressure that has not yet become supernatural.', accent: '#c75c48', start_movie: 1, end_movie: 30, display_order: 1 },
-  { name: 'Final Notices', slug: 'final-notices', description: 'The paperwork gets louder. The bureaucracy is starting to take the debtor’s silence personally.', writing_guidelines: 'Escalate the urgency and absurdity without resolving the debt.', accent: '#e78d4b', start_movie: 31, end_movie: 40, display_order: 2 },
-  { name: 'The Long Division', slug: 'long-division', description: 'A countdown begins. Ordinary time becomes just another negotiable term.', writing_guidelines: 'Treat the countdown as real and consequential. Preserve the mystery of who is keeping pace.', accent: '#d4b353', start_movie: 41, end_movie: 219, display_order: 3 },
-  { name: 'Grothkin Lore', slug: 'grothkin-lore', description: 'The debt-mythology of Grothkin surfaces: creditors, relics, and entities who remember every unpaid promise.', writing_guidelines: 'Ground each entry in accounting, then connect it to Grothkin without contradicting established canon.', accent: '#8a6ecc', start_movie: 220, end_movie: 300, display_order: 4 },
-  { name: 'Diminishing Returns', slug: 'diminishing-returns', description: 'The debt approaches mathematical insignificance while its consequences become cosmically significant.', writing_guidelines: 'Let the scale become strange, but keep one human consequence at the centre.', accent: '#568cb4', start_movie: 301, end_movie: 799, display_order: 5 },
-  { name: 'Settlement', slug: 'settlement', description: 'The closing entry is finally in sight. Every prior promise wants to be counted.', writing_guidelines: 'Build toward payment without deciding what “paid in full” means.', accent: '#7b9b79', start_movie: 800, end_movie: 800, display_order: 6 }
+  { name: 'Debt Collection', slug: 'debt-collection', description: 'An accountant is trying to recover one ordinary unpaid debt. At first, the job still looks normal.', writing_guidelines: 'Keep it close to real life: calls, offices, notices, and the first signs that this debt is not routine.', accent: '#c75c48', start_movie: 1, end_movie: 30, display_order: 1 },
+  { name: 'Final Notices', slug: 'final-notices', description: 'The reminders become more pointed, and the debtor’s silence starts to feel deliberate.', writing_guidelines: 'Raise the pressure and the absurdity, but do not settle the debt yet.', accent: '#e78d4b', start_movie: 31, end_movie: 40, display_order: 2 },
+  { name: 'The Long Division', slug: 'long-division', description: 'The accountant starts counting down. Nobody is quite sure what happens when the count runs out.', writing_guidelines: 'Treat the countdown as a real problem. Keep the person or force behind it unclear.', accent: '#d4b353', start_movie: 41, end_movie: 219, display_order: 3 },
+  { name: 'Grothkin Lore', slug: 'grothkin-lore', description: 'The story opens up into Grothkin: old creditors, strange records, and things that take unpaid promises seriously.', writing_guidelines: 'Start with a practical accounting problem, then connect it to Grothkin without breaking what has already been established.', accent: '#8a6ecc', start_movie: 220, end_movie: 300, display_order: 4 },
+  { name: 'Diminishing Returns', slug: 'diminishing-returns', description: 'The number gets smaller, but the debt keeps spreading into places it should not be able to reach.', writing_guidelines: 'Let things get strange, but give each story one clear human consequence.', accent: '#568cb4', start_movie: 301, end_movie: 799, display_order: 5 },
+  { name: 'Settlement', slug: 'settlement', description: 'The last film is close. Every promise, shortcut, and missing receipt has caught up with the accountant.', writing_guidelines: 'Build toward payment without deciding in advance what “paid in full” actually means.', accent: '#7b9b79', start_movie: 800, end_movie: 800, display_order: 6 }
 ]
 
 const collectorTitles = [
@@ -39,18 +39,18 @@ export function titleForFilm(number: number) {
   if (number === 41) return '3'
   if (number === 42) return '2'
   if (number === 43) return '1'
-  return `1 / 2^${number - 43}`
+  return `1/${number - 42}`
 }
 
 export function descriptionForFilm(number: number) {
-  if (number === 800) return 'At last, the balance reaches zero. Whether this is closure, a loophole, or the beginning of a new debt is left to the archives.'
-  if (number <= 30) return 'The accountant follows another thread in the debtor’s paper trail, discovering that routine collection is becoming uncomfortably personal.'
-  if (number <= 40) return 'The notices become theatrical and the office grows impatient. Every stamped envelope makes the debtor’s silence feel more deliberate.'
-  if (number >= 220 && number <= 300) return 'Grothkin Lore era. The ever-smaller debt pulls the accountant into a buried mythology where invoices are treated as sacred prophecies.'
-  if (number === 41) return 'The accountant starts the countdown with impossible confidence. Three is more than enough time, surely.'
-  if (number === 42) return 'The second mark on the countdown exposes an unsettling fact: the debtor has been counting too.'
-  if (number === 43) return 'One final whole unit of patience remains. The office holds its breath.'
-  return 'As the fraction shrinks, the stakes grow absurdly vast. The ledger insists there is still something left to collect.'
+  if (number === 800) return 'The balance finally reaches zero. Whether that means relief, a loophole, or something worse is up to the archive.'
+  if (number <= 30) return 'The accountant follows another lead on the debtor’s file and finds that a simple collection job is becoming personal.'
+  if (number <= 40) return 'The notices get sharper and the office loses patience. The debtor still does not answer.'
+  if (number >= 220 && number <= 300) return 'Grothkin Lore era. The smaller the debt gets, the more it pulls the accountant into old records and stranger obligations.'
+  if (number === 41) return 'The accountant starts a countdown at three. It should be simple. It is not.'
+  if (number === 42) return 'The count reaches two, and the debtor shows signs of knowing exactly what it means.'
+  if (number === 43) return 'One is left. Everyone in the office is waiting to see what comes next.'
+  return 'The accountant keeps counting in smaller pieces. The debt is shrinking, but nobody is getting any closer to being done.'
 }
 
 export function eraForFilm(number: number, eras = ERAS) {
