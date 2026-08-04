@@ -23,6 +23,7 @@ type Story = {
   createdAt: string
   metrics: { upvotes: number; downvotes: number; bookmarks: number; comments: number }
   continuityNote?: string
+  viewerReaction?: 1 | -1
 }
 
 const initialDraft = {
@@ -82,6 +83,7 @@ export function App() {
   const [adminQueue, setAdminQueue] = useState<Story[]>([])
   const [myStories, setMyStories] = useState<Story[]>([])
   const [lastSubmission, setLastSubmission] = useState<Story | null>(null)
+  const [filmStates, setFilmStates] = useState<Record<number, 'open' | 'canon' | 'challenger'>>({})
   const autosave = useRef<number | undefined>(undefined)
 
   const currentFilm = remoteFilm ?? filmForNumber(focusedFilm, eras)
@@ -127,6 +129,8 @@ export function App() {
     return () => listener.subscription.unsubscribe()
   }, [])
 
+  useEffect(() => { if (!supabase) return; void supabase.from('stories').select('film_number,status').in('status', ['canon', 'challenger']).then(({ data }) => { const states: Record<number, 'open' | 'canon' | 'challenger'> = {}; for (const entry of data ?? []) { const row = entry as { film_number: number; status: 'canon' | 'challenger' }; states[row.film_number] = row.status === 'challenger' ? 'challenger' : (states[row.film_number] ?? 'canon') }; setFilmStates(states) }) }, [])
+
   useEffect(() => {
     const client = supabase
     if (!client) return
@@ -158,8 +162,10 @@ export function App() {
       setStories([])
     } else {
       const storyIds = (storyResult.data ?? []).map((entry) => (entry as { id: string }).id)
-      const { data: metricRows } = storyIds.length ? await client.from('story_metrics').select('story_id,upvotes,downvotes,bookmarks,comments').in('story_id', storyIds) : { data: [] as Array<{ story_id: string; upvotes: number; downvotes: number; bookmarks: number; comments: number }> }
+      const [{ data: metricRows }, { data: reactionRows }, { data: profileRows }] = storyIds.length ? await Promise.all([client.from('story_metrics').select('story_id,upvotes,downvotes,bookmarks,comments').in('story_id', storyIds), member ? client.from('story_reactions').select('story_id,value').eq('user_id', member.id).in('story_id', storyIds) : Promise.resolve({ data: [] as Array<{ story_id: string; value: 1 | -1 }> }), client.from('profiles').select('id,handle,display_name,ledger_balance')]) : [{ data: [] as Array<{ story_id: string; upvotes: number; downvotes: number; bookmarks: number; comments: number }> }, { data: [] as Array<{ story_id: string; value: 1 | -1 }> }, { data: [] as Array<{ id: string; handle: string; display_name: string; ledger_balance: number }> }]
       const metricByStory = new Map((metricRows ?? []).map((metric) => [metric.story_id, metric]))
+      const reactionByStory = new Map((reactionRows ?? []).map((reaction) => [reaction.story_id, reaction.value]))
+      const profileById = new Map((profileRows ?? []).map((profile) => [profile.id, profile]))
       const incoming = (storyResult.data ?? []).map((entry) => {
         const raw = entry as unknown as {
           id: string; title: string; body_markdown: string; continuity_note?: string; film_number: number; status: Story['status']; word_count: number; reading_minutes: number; created_at: string
@@ -168,8 +174,8 @@ export function App() {
         return {
           id: raw.id, title: raw.title, body: raw.body_markdown, filmNumber: raw.film_number, status: raw.status,
           wordCount: raw.word_count, readingMinutes: raw.reading_minutes, createdAt: raw.created_at, continuityNote: raw.continuity_note ?? '',
-          author: { handle: 'archive-writer', displayName: 'Archive writer', ledger: 0 },
-          metrics: (metricByStory.get(raw.id) as Story['metrics'] | undefined) ?? { upvotes: 0, downvotes: 0, bookmarks: 0, comments: 0 }
+          author: { handle: profileById.get(raw.author_id)?.handle ?? 'unknown', displayName: profileById.get(raw.author_id)?.display_name ?? 'Unknown writer', ledger: profileById.get(raw.author_id)?.ledger_balance ?? 0 },
+          metrics: (metricByStory.get(raw.id) as Story['metrics'] | undefined) ?? { upvotes: 0, downvotes: 0, bookmarks: 0, comments: 0 }, viewerReaction: reactionByStory.get(raw.id) as 1 | -1 | undefined
         } satisfies Story
       })
       setStories(incoming)
@@ -223,7 +229,7 @@ export function App() {
     if (!client || !member) { if (!silent) setSignInOpen(true); return null }
     if (!draft.title.trim() && !draft.body.trim()) return draftId
     setDraftSaving(true)
-    const payload = { title: draft.title.trim() || 'Untitled story', body_markdown: draft.body, continuity_note: draft.continuityNote.trim(), film_number: focusedFilm, author_id: member.id }
+    const payload = { title: draft.title.trim().length >= 5 ? draft.title.trim() : 'Untitled story', body_markdown: draft.body, continuity_note: draft.continuityNote.trim(), film_number: focusedFilm, author_id: member.id }
     let result
     if (draftId) {
       result = await client.from('stories').update({ title: payload.title, body_markdown: payload.body_markdown, continuity_note: payload.continuity_note }).eq('id', draftId).select('id').single()
@@ -250,6 +256,7 @@ export function App() {
 
   async function submitDraft() {
     const client = supabase
+    if (draft.title.trim().length < 5) { notify('Give the story a title of at least 5 characters before publishing.'); return }
     const id = await saveDraft(true)
     if (!client || !id) return
     const { data, error } = await client.rpc('submit_story', { p_story_id: id })
@@ -271,11 +278,14 @@ export function App() {
 
   async function reactToStory(story: Story, value: 1 | -1) {
     if (!member || !supabase) { setSignInOpen(true); return }
-    const { error } = await supabase.from('story_reactions').upsert({ story_id: story.id, user_id: member.id, value }, { onConflict: 'story_id,user_id' })
+    const removing = story.viewerReaction === value
+    const { error } = removing
+      ? await supabase.from('story_reactions').delete().eq('story_id', story.id).eq('user_id', member.id)
+      : await supabase.from('story_reactions').upsert({ story_id: story.id, user_id: member.id, value }, { onConflict: 'story_id,user_id' })
     if (error) notify(error.message)
     else {
-      setStories((all) => all.map((entry) => entry.id !== story.id ? entry : { ...entry, metrics: { ...entry.metrics, upvotes: value === 1 ? entry.metrics.upvotes + 1 : entry.metrics.upvotes, downvotes: value === -1 ? entry.metrics.downvotes + 1 : entry.metrics.downvotes } }))
-      notify(value === 1 ? 'Support recorded — +1 ledger.' : 'Vote recorded — +1 ledger.')
+      setStories((all) => all.map((entry) => entry.id !== story.id ? entry : { ...entry, viewerReaction: removing ? undefined : value, metrics: { ...entry.metrics, upvotes: Math.max(0, entry.metrics.upvotes + (value === 1 ? (removing ? -1 : 1) : entry.viewerReaction === 1 ? -1 : 0)), downvotes: Math.max(0, entry.metrics.downvotes + (value === -1 ? (removing ? -1 : 1) : entry.viewerReaction === -1 ? -1 : 0)) } }))
+      notify(removing ? 'Vote removed.' : value === 1 ? 'Support recorded.' : 'Vote recorded.')
       void loadFilm(focusedFilm)
     }
   }
@@ -336,7 +346,7 @@ export function App() {
 
       <main>
         {page === 'home' && <Home onBrowse={() => go('archive')} onOpenFilm={openFilm} onWrite={() => void openWriter(1)} />}
-        {page === 'archive' && <Archive films={allFilms} search={archiveSearch} setSearch={setArchiveSearch} eraFilter={eraFilter} setEraFilter={setEraFilter} onOpenFilm={openFilm} />}
+        {page === 'archive' && <Archive films={allFilms} states={filmStates} search={archiveSearch} setSearch={setArchiveSearch} eraFilter={eraFilter} setEraFilter={setEraFilter} onOpenFilm={openFilm} />}
         {page === 'timeline' && <Timeline eras={eras} focus={timelineFocus} setFocus={setTimelineFocus} onOpenFilm={openFilm} />}
         {page === 'film' && <FilmPage film={currentFilm} stories={stories} loading={filmLoading} onBack={() => go('archive')} onOpenFilm={openFilm} onWrite={() => void openWriter()} onReact={reactToStory} onBookmark={bookmarkStory} />}
         {page === 'write' && <WritingStudio film={currentFilm} draft={draft} setDraft={setDraft} previewing={previewing} setPreviewing={setPreviewing} saving={draftSaving} onSave={() => void saveDraft()} onSubmit={() => void submitDraft()} onBack={() => go('film')} onFormat={insertMarkdown} />}
@@ -385,7 +395,7 @@ function CommunityFeed({ onOpenFilm }: { onOpenFilm: (number: number) => void })
   return <section className="community-feed section-wrap"><div><p className="eyebrow"><span /> The live archive</p><h2>What the group is <i>moving forward.</i></h2></div><div className="feed-columns"><div><header><Gavel size={17} /><b>Canon battles</b></header>{battles.length ? battles.map((story) => <button key={story.id} onClick={() => onOpenFilm(story.film_number)}><small>Movie #{story.film_number} · Vote open</small><b>{story.title}</b><ArrowRight size={15} /></button>) : <p>No active challenges yet. The next alternative story starts one automatically.</p>}</div><div><header><Sparkles size={17} /><b>Newest canon</b></header>{fresh.length ? fresh.map((story) => <button key={story.id} onClick={() => onOpenFilm(story.film_number)}><small>Movie #{story.film_number}</small><b>{story.title}</b><ArrowRight size={15} /></button>) : <p>The first published story will show up here.</p>}</div></div></section>
 }
 
-function Archive({ films, search, setSearch, eraFilter, setEraFilter, onOpenFilm }: { films: Film[]; search: string; setSearch: (value: string) => void; eraFilter: string; setEraFilter: (value: string) => void; onOpenFilm: (number: number) => void }) {
+function Archive({ films, states, search, setSearch, eraFilter, setEraFilter, onOpenFilm }: { films: Film[]; states: Record<number, 'open' | 'canon' | 'challenger'>; search: string; setSearch: (value: string) => void; eraFilter: string; setEraFilter: (value: string) => void; onOpenFilm: (number: number) => void }) {
   const visible = films.filter((film) => {
     const query = search.toLowerCase().trim()
     return (!query || `${film.number} ${film.title} ${film.official_description}`.toLowerCase().includes(query)) && (eraFilter === 'all' || film.era.slug === eraFilter)
@@ -393,7 +403,7 @@ function Archive({ films, search, setSearch, eraFilter, setEraFilter, onOpenFilm
   return <section className="archive section-wrap">
     <div className="archive-heading"><div><p className="eyebrow"><span /> The full paper trail</p><h1>All <i>800 films.</i></h1><p>Search by title or number, or jump straight to an era.</p></div><div className="archive-amount">{formatNumber(visible.length)} <span>films found</span></div></div>
     <div className="archive-tools"><label className="search"><Search size={18} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by title or film number" /><kbd>⌘ K</kbd></label><div className="era-filters"><button className={eraFilter === 'all' ? 'selected' : ''} onClick={() => setEraFilter('all')}>All</button>{ERAS.map((era) => <button key={era.slug} className={eraFilter === era.slug ? 'selected' : ''} onClick={() => setEraFilter(era.slug)}>{era.name}</button>)}</div></div>
-    <div className="film-grid">{visible.map((film) => <button className="film-card" key={film.number} onClick={() => onOpenFilm(film.number)} style={{ '--era-colour': film.era.accent } as React.CSSProperties}><span className="film-number">#{String(film.number).padStart(3, '0')}</span><span className="era-dot" /><h3>{film.title}</h3><p>{film.official_description}</p><footer><span>{film.era.name}</span><ChevronRight size={16} /></footer></button>)}</div>
+    <div className="archive-key"><span className="open">Open</span><span className="canon">Canon</span><span className="challenger">Challenge open</span></div><div className="film-grid">{visible.map((film) => { const state = states[film.number] ?? 'open'; return <button className={classNames('film-card', `film-${state}`)} key={film.number} onClick={() => onOpenFilm(film.number)} style={{ '--era-colour': film.era.accent } as React.CSSProperties}><span className="film-number">#{String(film.number).padStart(3, '0')}</span><span className="film-state">{state === 'canon' ? 'Canon' : state === 'challenger' ? 'Challenge' : 'Open'}</span><h3>{film.title}</h3><p>{film.official_description}</p><footer><span>{film.era.name}</span><ChevronRight size={16} /></footer></button> })}</div>
   </section>
 }
 
@@ -450,7 +460,7 @@ function EditProposalBox({ story }: { story: Story }) {
   async function refresh() { if (!supabase) return; const { data } = await supabase.from('story_edit_proposals').select('id,rationale,created_at').eq('story_id', story.id).eq('status', 'open').order('created_at', { ascending: false }); setProposals(data ?? []) }
   useEffect(() => { void refresh() }, [story.id])
   async function propose() { if (!supabase) { setMessage('Sign in to suggest an edit.'); return }; const { data: auth } = await supabase.auth.getUser(); if (!auth.user) { setMessage('Sign in to suggest an edit.'); return }; const { error } = await supabase.from('story_edit_proposals').insert({ story_id: story.id, author_id: auth.user.id, replacement_body_markdown: body, rationale: reason }); setMessage(error ? error.message : 'Edit proposal opened for voting.'); if (!error) { setOpen(false); void refresh() } }
-  async function vote(proposalId: string, value: 1 | -1) { if (!supabase) { setMessage('Sign in to vote.'); return }; const { data: auth } = await supabase.auth.getUser(); if (!auth.user) { setMessage('Sign in to vote.'); return }; const { error } = await supabase.from('story_edit_votes').upsert({ proposal_id: proposalId, user_id: auth.user.id, value }, { onConflict: 'proposal_id,user_id' }); setMessage(error ? error.message : 'Edit vote recorded — +1 ledger.'); }
+  async function vote(proposalId: string, value: 1 | -1) { if (!supabase) { setMessage('Sign in to vote.'); return }; const { data: auth } = await supabase.auth.getUser(); if (!auth.user) { setMessage('Sign in to vote.'); return }; const { error } = await supabase.from('story_edit_votes').upsert({ proposal_id: proposalId, user_id: auth.user.id, value }, { onConflict: 'proposal_id,user_id' }); setMessage(error ? error.message : 'Edit vote recorded.'); }
   return <section className="edit-proposal"><div><p className="eyebrow"><span /> Improve the record</p><h2>Suggest a targeted edit.</h2><p>Propose a paragraph-level rewrite without replacing the whole story. The group can vote it through.</p></div><button className="button ghost slim" onClick={() => setOpen((value) => !value)}>{open ? 'Close' : 'Suggest an edit'}</button>{open && <div className="proposal-form"><textarea value={body} onChange={(event) => setBody(event.target.value)} aria-label="Proposed story text" /><input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why does this improve the story?" aria-label="Edit rationale" /><button className="button primary slim" onClick={() => void propose()}>Open edit vote <ArrowRight size={15} /></button></div>}{proposals.map((proposal) => <div className="proposal-vote" key={proposal.id}><span><b>Open edit vote</b><small>{proposal.rationale || 'A writer proposed a focused revision.'}</small></span><div><button onClick={() => void vote(proposal.id, 1)}><ArrowUp size={14} /> Support</button><button onClick={() => void vote(proposal.id, -1)}><ArrowDown size={14} /> Keep current</button></div></div>)}{message && <small>{message}</small>}</section>
 }
 
@@ -459,15 +469,20 @@ function LegacyStoryCard({ story, featured = false, challenge = false, onReact, 
 }
 
 function StoryDiscussion({ storyId }: { storyId: string }) {
-  const [open, setOpen] = useState(false); const [body, setBody] = useState(''); const [comments, setComments] = useState<Array<{ id: string; body: string; created_at: string }>>([]); const [message, setMessage] = useState('')
-  async function refresh() { if (!supabase) return; const { data, error } = await supabase.from('comments').select('id,body,created_at').eq('story_id', storyId).eq('is_removed', false).order('created_at'); if (!error) setComments(data ?? []) }
+  const [open, setOpen] = useState(false); const [body, setBody] = useState(''); const [comments, setComments] = useState<Array<{ id: string; body: string; created_at: string; author?: Array<{ handle: string; display_name: string; ledger_balance: number }> | null }>>([]); const [message, setMessage] = useState('')
+  async function refresh() { if (!supabase) return; const { data, error } = await supabase.from('comments').select('id,body,created_at,author:profiles(handle,display_name,ledger_balance)').eq('story_id', storyId).eq('is_removed', false).order('created_at'); if (!error) setComments(data ?? []) }
   useEffect(() => { if (open) void refresh() }, [open, storyId])
-  async function post() { if (!supabase) { setMessage('Sign in to leave a comment.'); return }; const { data: auth } = await supabase.auth.getUser(); if (!auth.user) { setMessage('Sign in to leave a comment.'); return }; const { error } = await supabase.from('comments').insert({ story_id: storyId, author_id: auth.user.id, body }); if (error) setMessage(error.message); else { setBody(''); setMessage('Comment added — +1 ledger.'); void refresh() } }
-  return <section className="story-discussion"><button className="text-button" onClick={() => setOpen((value) => !value)}><MessageCircle size={15} /> {open ? 'Hide discussion' : 'Open discussion'}</button>{open && <div className="comment-area">{comments.map((comment) => <article key={comment.id}><p>{comment.body}</p><small>{relativeDate(comment.created_at)}</small></article>)}<textarea value={body} onChange={(event) => setBody(event.target.value)} placeholder="Add something useful to the record…" maxLength={3000} /><button className="button primary slim" disabled={body.trim().length < 2} onClick={() => void post()}>Post comment</button>{message && <small>{message}</small>}</div>}</section>
+  async function post() { if (!supabase) { setMessage('Sign in to leave a comment.'); return }; const { data: auth } = await supabase.auth.getUser(); if (!auth.user) { setMessage('Sign in to leave a comment.'); return }; const { error } = await supabase.from('comments').insert({ story_id: storyId, author_id: auth.user.id, body }); if (error) setMessage(error.message); else { setBody(''); setMessage('Comment added.'); void refresh() } }
+  return <section className="story-discussion"><button className="text-button" onClick={() => setOpen((value) => !value)}><MessageCircle size={15} /> {open ? 'Hide discussion' : 'Open discussion'}</button>{open && <div className="comment-area">{comments.map((comment) => { const author = comment.author?.[0]; return <article key={comment.id}><b>{author?.display_name ?? 'Archive member'}</b><small>@{author?.handle ?? 'member'}{author?.ledger_balance ? ` · ${formatNumber(author.ledger_balance)} ledger` : ''} · {relativeDate(comment.created_at)}</small><p>{comment.body}</p></article> })}<textarea value={body} onChange={(event) => setBody(event.target.value)} placeholder="Add something useful to the record…" maxLength={3000} /><button className="button primary slim" disabled={body.trim().length < 2} onClick={() => void post()}>Post comment</button>{message && <small>{message}</small>}</div>}</section>
+}
+
+function RecentStoryCard({ story, featured = false, challenge = false, onReact, onBookmark }: { story: Story; featured?: boolean; challenge?: boolean; onReact: (story: Story, value: 1 | -1) => void; onBookmark: (story: Story) => void }) {
+  return <article className={classNames('story-card', featured && 'featured', challenge && 'challenge')}><header><div className="story-byline"><span className="avatar">{story.author.displayName.slice(0, 1)}</span><span><b>{story.author.displayName}</b><small>@{story.author.handle} · {relativeDate(story.createdAt)}</small></span></div><span className={classNames('status-badge', story.status)}>{story.status === 'canon' ? <><Check size={13} /> Canon</> : <><Gavel size={13} /> Challenger</>}</span></header><div className="story-main"><h2>{story.title}</h2><div className="story-meta"><span><Clock3 size={14} /> {story.readingMinutes} min</span><span>{formatNumber(story.wordCount)} words</span><span><Sparkles size={14} /> {formatNumber(story.author.ledger)} ledger</span></div><p className="story-excerpt">{story.body}</p>{story.continuityNote && <aside className="story-handoff"><b>For the next film</b><p>{story.continuityNote}</p></aside>}</div><footer><div className="story-votes"><button title="Support this story" onClick={() => onReact(story, 1)}><ArrowUp size={16} /> {formatNumber(story.metrics.upvotes)}</button><button title="Vote against this story" onClick={() => onReact(story, -1)}><ArrowDown size={16} /> {formatNumber(story.metrics.downvotes)}</button></div><button className="icon-button" onClick={() => onBookmark(story)} aria-label="Save story"><Bookmark size={17} /></button></footer><StoryDiscussion storyId={story.id} /></article>
 }
 
 function StoryCard({ story, featured = false, challenge = false, onReact, onBookmark }: { story: Story; featured?: boolean; challenge?: boolean; onReact: (story: Story, value: 1 | -1) => void; onBookmark: (story: Story) => void }) {
-  return <article className={classNames('story-card', featured && 'featured', challenge && 'challenge')}><header><div className="story-byline"><span className="avatar">{story.author.displayName.slice(0, 1)}</span><span><b>{story.author.displayName}</b><small>@{story.author.handle} · {relativeDate(story.createdAt)}</small></span></div><span className={classNames('status-badge', story.status)}>{story.status === 'canon' ? <><Check size={13} /> Canon</> : <><Gavel size={13} /> Challenger</>}</span></header><div className="story-main"><h2>{story.title}</h2><div className="story-meta"><span><Clock3 size={14} /> {story.readingMinutes} min</span><span>{formatNumber(story.wordCount)} words</span><span><Sparkles size={14} /> {formatNumber(story.author.ledger)} ledger</span></div><p className="story-excerpt">{story.body}</p>{story.continuityNote && <aside className="story-handoff"><b>For the next film</b><p>{story.continuityNote}</p></aside>}</div><footer><div className="story-votes"><button title="Support this story" onClick={() => onReact(story, 1)}><ArrowUp size={16} /> {formatNumber(story.metrics.upvotes)}</button><button title="Vote against this story" onClick={() => onReact(story, -1)}><ArrowDown size={16} /> {formatNumber(story.metrics.downvotes)}</button></div><button className="icon-button" onClick={() => onBookmark(story)} aria-label="Save story"><Bookmark size={17} /></button></footer><StoryDiscussion storyId={story.id} /></article>
+  const ledger = story.author.ledger > 0 ? <span><Sparkles size={14} /> {formatNumber(story.author.ledger)} ledger</span> : null
+  return <article className={classNames('story-card', featured && 'featured', challenge && 'challenge')}><header><div className="story-byline"><span className="avatar">{story.author.displayName.slice(0, 1)}</span><span><b>{story.author.displayName}</b><small>@{story.author.handle} · {relativeDate(story.createdAt)}</small></span></div><span className={classNames('status-badge', story.status)}>{story.status === 'canon' ? <><Check size={13} /> Canon</> : <><Gavel size={13} /> Challenger</>}</span></header><div className="story-main"><h2>{story.title}</h2><div className="story-meta"><span><Clock3 size={14} /> {story.readingMinutes} min</span><span>{formatNumber(story.wordCount)} words</span>{ledger}</div><p className="story-excerpt">{story.body}</p>{story.continuityNote && <aside className="story-handoff"><b>For the next film</b><p>{story.continuityNote}</p></aside>}</div><footer><div className="story-votes"><button className={story.viewerReaction === 1 ? 'selected' : ''} title={story.viewerReaction === 1 ? 'Remove your support' : 'Support this story'} onClick={() => onReact(story, 1)}><ArrowUp size={16} /> {formatNumber(story.metrics.upvotes)}</button><button className={story.viewerReaction === -1 ? 'selected' : ''} title={story.viewerReaction === -1 ? 'Remove your vote' : 'Vote against this story'} onClick={() => onReact(story, -1)}><ArrowDown size={16} /> {formatNumber(story.metrics.downvotes)}</button></div><button className="icon-button" onClick={() => onBookmark(story)} aria-label="Save story"><Bookmark size={17} /></button></footer><StoryDiscussion storyId={story.id} /></article>
 }
 
 function WritingStudio({ film, draft, setDraft, previewing, setPreviewing, saving, onSave, onSubmit, onBack, onFormat }: { film: Film; draft: { title: string; body: string; continuityNote: string }; setDraft: React.Dispatch<React.SetStateAction<{ title: string; body: string; continuityNote: string }>>; previewing: boolean; setPreviewing: (value: boolean) => void; saving: boolean; onSave: () => void; onSubmit: () => void; onBack: () => void; onFormat: (before: string, after?: string) => void }) {
@@ -478,7 +493,7 @@ function WritingStudio({ film, draft, setDraft, previewing, setPreviewing, savin
 
 function WritingDesk({ stories, onOpenDraft, onOpenFilm, onWrite }: { stories: Story[]; onOpenDraft: (story: Story) => void; onOpenFilm: (number: number) => void; onWrite: () => void }) { return <section className="archive section-wrap"><div className="archive-heading"><div><p className="eyebrow"><span /> Your workspace</p><h1>Writing <i>desk.</i></h1><p>Drafts stay here until you publish. Published stories and active challenges are kept together so nothing disappears.</p></div><button className="button primary" onClick={onWrite}><PenLine size={16} /> New story</button></div><div className="desk-list">{stories.length ? stories.map((story) => <article key={story.id} className="desk-card"><span className={classNames('status-badge', story.status)}>{story.status === 'draft' ? 'Draft' : story.status === 'canon' ? 'Canon' : story.status === 'challenger' ? 'Challenge open' : story.status}</span><div><p className="eyebrow">Movie #{story.filmNumber}</p><h2>{story.title}</h2><p>{story.status === 'draft' ? `${formatNumber(story.wordCount)} words · last saved automatically` : `Published · ${formatNumber(story.wordCount)} words`}</p></div><div>{story.status === 'draft' ? <button className="button ghost slim" onClick={() => onOpenDraft(story)}>Continue editing</button> : <button className="button ghost slim" onClick={() => onOpenFilm(story.filmNumber)}>Open film</button>}</div></article>) : <div className="empty-canon"><p className="eyebrow"><span /> Nothing saved yet</p><h2>Your drafts will <i>always live here.</i></h2><button className="button primary" onClick={onWrite}>Write your first one <ArrowRight size={16} /></button></div>}</div></section> }
 
-function SubmissionScreen({ story, onDesk, onFilm }: { story: Story | null; onDesk: () => void; onFilm: () => void }) { const isChallenge = story?.status === 'challenger'; return <section className="submitted-screen section-wrap"><span className="brand-mark">A</span><p className="eyebrow"><span /> Publication recorded</p><h1>{isChallenge ? <>Your challenge is <i>live.</i></> : <>Your story is now <i>canon.</i></>}</h1><p>{isChallenge ? 'Readers can now choose between your version and the current canon. You earned ledger for putting a real alternative on the table.' : 'There was no existing canon, so the archive has published your story immediately. You can still see every revision in your writing desk.'}</p><div><button className="button primary" onClick={onFilm}>Open the film <ArrowRight size={16} /></button><button className="button ghost" onClick={onDesk}>Go to my desk</button></div></section> }
+function SubmissionScreen({ story, onDesk, onFilm }: { story: Story | null; onDesk: () => void; onFilm: () => void }) { const isChallenge = story?.status === 'challenger'; return <section className="submitted-screen section-wrap"><span className="brand-mark">A</span><p className="eyebrow"><span /> Publication recorded</p><h1>{isChallenge ? <>Your challenge is <i>live.</i></> : <>Your story is now <i>canon.</i></>}</h1><p>{isChallenge ? 'Readers can now choose between your version and the current canon.' : 'There was no existing canon, so the archive has published your story immediately. You can still see every revision in your writing desk.'}</p><div><button className="button primary" onClick={onFilm}>Open the film <ArrowRight size={16} /></button><button className="button ghost" onClick={onDesk}>Go to my desk</button></div></section> }
 
 function LegacyAdminRoom({ member, eras, setEras, queue, onModerate, notify }: { member: Member | null; eras: Era[]; setEras: React.Dispatch<React.SetStateAction<Era[]>>; queue: Story[]; onModerate: (story: Story, action: 'approve_canon' | 'archive' | 'reject') => void; notify: (message: string) => void }) {
   const [selected, setSelected] = useState(eras[0]?.slug ?? '')
