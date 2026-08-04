@@ -144,9 +144,11 @@ export function App() {
       return
     }
     setFilmLoading(true)
+    setRemoteFilm(null)
+    setStories([])
     const [filmResult, storyResult] = await Promise.all([
       client.from('films').select('number,title,official_description,era:eras(*)').eq('number', number).single(),
-      client.from('stories').select('id,title,body_markdown,continuity_note,film_number,status,word_count,reading_minutes,created_at,author:profiles(handle,display_name,ledger_balance),metrics:story_metrics(upvotes,downvotes,bookmarks,comments)').eq('film_number', number).in('status', ['canon', 'challenger', 'archived']).order('created_at', { ascending: false })
+      client.from('stories').select('id,title,body_markdown,continuity_note,film_number,status,word_count,reading_minutes,created_at,author_id').eq('film_number', number).in('status', ['canon', 'challenger', 'archived']).order('created_at', { ascending: false })
     ])
     if (filmResult.data) {
       const raw = filmResult.data as unknown as { number: number; title: string; official_description: string; era: Era | null }
@@ -158,14 +160,13 @@ export function App() {
       const incoming = (storyResult.data ?? []).map((entry) => {
         const raw = entry as unknown as {
           id: string; title: string; body_markdown: string; continuity_note?: string; film_number: number; status: Story['status']; word_count: number; reading_minutes: number; created_at: string
-          author: { handle: string; display_name: string; ledger_balance: number } | null
-          metrics: { upvotes: number; downvotes: number; bookmarks: number; comments: number } | null
+          author_id: string
         }
         return {
           id: raw.id, title: raw.title, body: raw.body_markdown, filmNumber: raw.film_number, status: raw.status,
           wordCount: raw.word_count, readingMinutes: raw.reading_minutes, createdAt: raw.created_at, continuityNote: raw.continuity_note ?? '',
-          author: { handle: raw.author?.handle ?? 'archivist', displayName: raw.author?.display_name ?? 'Archive Writer', ledger: raw.author?.ledger_balance ?? 0 },
-          metrics: raw.metrics ?? { upvotes: 0, downvotes: 0, bookmarks: 0, comments: 0 }
+          author: { handle: 'archive-writer', displayName: 'Archive writer', ledger: 0 },
+          metrics: { upvotes: 0, downvotes: 0, bookmarks: 0, comments: 0 }
         } satisfies Story
       })
       setStories(incoming)
@@ -236,7 +237,7 @@ export function App() {
     window.clearTimeout(autosave.current)
     autosave.current = window.setTimeout(() => { void saveDraft(true) }, 1200)
     return () => window.clearTimeout(autosave.current)
-  }, [draft.title, draft.body, page, member?.id, focusedFilm])
+  }, [draft.title, draft.body, draft.continuityNote, draftId, page, member?.id, focusedFilm])
 
   async function submitDraft() {
     const client = supabase
@@ -251,12 +252,12 @@ export function App() {
 
   async function loadMyStories() {
     if (!supabase || !member) { setMyStories([]); return }
-    const { data, error } = await supabase.from('stories').select('id,title,body_markdown,continuity_note,film_number,status,word_count,reading_minutes,created_at,author:profiles(handle,display_name,ledger_balance),metrics:story_metrics(upvotes,downvotes,bookmarks,comments)').eq('author_id', member.id).order('updated_at', { ascending: false })
+    const { data, error } = await supabase.from('stories').select('id,title,body_markdown,continuity_note,film_number,status,word_count,reading_minutes,created_at,author_id,updated_at').eq('author_id', member.id).order('updated_at', { ascending: false })
     if (error) { notify(error.message); return }
-    setMyStories((data ?? []).map((entry) => { const raw = entry as unknown as { id:string; title:string; body_markdown:string; continuity_note?:string; film_number:number; status:Story['status']; word_count:number; reading_minutes:number; created_at:string; author:{handle:string;display_name:string;ledger_balance:number}|null; metrics:Story['metrics']|null }; return { id:raw.id,title:raw.title,body:raw.body_markdown,continuityNote:raw.continuity_note ?? '',filmNumber:raw.film_number,status:raw.status,wordCount:raw.word_count,readingMinutes:raw.reading_minutes,createdAt:raw.created_at,author:{handle:raw.author?.handle ?? 'writer',displayName:raw.author?.display_name ?? 'Writer',ledger:raw.author?.ledger_balance ?? 0},metrics:raw.metrics ?? {upvotes:0,downvotes:0,bookmarks:0,comments:0} } }))
+    setMyStories((data ?? []).map((entry) => { const raw = entry as any; return { id:raw.id,title:raw.title,body:raw.body_markdown,continuityNote:raw.continuity_note ?? '',filmNumber:raw.film_number,status:raw.status,wordCount:raw.word_count,readingMinutes:raw.reading_minutes,createdAt:raw.created_at,author:{handle:member.handle,displayName:member.displayName,ledger:member.ledger},metrics:{upvotes:0,downvotes:0,bookmarks:0,comments:0} } }))
   }
 
-  function openDraft(story: Story) { setFocusedFilm(story.filmNumber); setRemoteFilm(null); setDraft({ title: story.title, body: story.body, continuityNote: story.continuityNote ?? '' }); setDraftId(story.id); go('write') }
+  function openDraft(story: Story) { setFocusedFilm(story.filmNumber); void loadFilm(story.filmNumber); setDraft({ title: story.title, body: story.body, continuityNote: story.continuityNote ?? '' }); setDraftId(story.id); go('write') }
 
   async function reactToStory(story: Story, value: 1 | -1) {
     if (!member || !supabase) { setSignInOpen(true); return }
