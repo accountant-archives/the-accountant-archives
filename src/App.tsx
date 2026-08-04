@@ -8,7 +8,7 @@ import {
 import { ERAS, descriptionForFilm, eraForFilm, filmForNumber, readingTime, titleForFilm, words, type Era, type Film } from './lib/catalogue'
 import { isSupabaseConfigured, signInWithGoogle, supabase } from './lib/supabase'
 
-type Page = 'home' | 'archive' | 'timeline' | 'film' | 'write' | 'admin'
+type Page = 'home' | 'archive' | 'timeline' | 'film' | 'write' | 'desk' | 'submitted' | 'admin'
 type Role = 'writer' | 'moderator' | 'admin'
 type Member = { id: string; handle: string; displayName: string; ledger: number; role: Role; avatarUrl?: string | null }
 type Story = {
@@ -22,11 +22,13 @@ type Story = {
   readingMinutes: number
   createdAt: string
   metrics: { upvotes: number; downvotes: number; bookmarks: number; comments: number }
+  continuityNote?: string
 }
 
 const initialDraft = {
   title: '',
-  body: ''
+  body: '',
+  continuityNote: ''
 }
 
 const showcaseStories: Story[] = [
@@ -78,6 +80,8 @@ export function App() {
   const [previewing, setPreviewing] = useState(false)
   const [timelineFocus, setTimelineFocus] = useState<string | null>(null)
   const [adminQueue, setAdminQueue] = useState<Story[]>([])
+  const [myStories, setMyStories] = useState<Story[]>([])
+  const [lastSubmission, setLastSubmission] = useState<Story | null>(null)
   const autosave = useRef<number | undefined>(undefined)
 
   const currentFilm = remoteFilm ?? filmForNumber(focusedFilm, eras)
@@ -91,6 +95,8 @@ export function App() {
 
   function go(next: Page) {
     setPage(next)
+    const target = next === 'home' ? '' : `#/${next}`
+    if (window.location.hash !== target) window.history.pushState({ page: next }, '', `${window.location.pathname}${target}`)
     setMenuOpen(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -140,7 +146,7 @@ export function App() {
     setFilmLoading(true)
     const [filmResult, storyResult] = await Promise.all([
       client.from('films').select('number,title,official_description,era:eras(*)').eq('number', number).single(),
-      client.from('stories').select('id,title,body_markdown,film_number,status,word_count,reading_minutes,created_at,author:profiles(handle,display_name,ledger_balance),metrics:story_metrics(upvotes,downvotes,bookmarks,comments)').eq('film_number', number).in('status', ['canon', 'challenger', 'archived']).order('created_at', { ascending: false })
+      client.from('stories').select('id,title,body_markdown,continuity_note,film_number,status,word_count,reading_minutes,created_at,author:profiles(handle,display_name,ledger_balance),metrics:story_metrics(upvotes,downvotes,bookmarks,comments)').eq('film_number', number).in('status', ['canon', 'challenger', 'archived']).order('created_at', { ascending: false })
     ])
     if (filmResult.data) {
       const raw = filmResult.data as unknown as { number: number; title: string; official_description: string; era: Era | null }
@@ -151,13 +157,13 @@ export function App() {
     } else {
       const incoming = (storyResult.data ?? []).map((entry) => {
         const raw = entry as unknown as {
-          id: string; title: string; body_markdown: string; film_number: number; status: Story['status']; word_count: number; reading_minutes: number; created_at: string
+          id: string; title: string; body_markdown: string; continuity_note?: string; film_number: number; status: Story['status']; word_count: number; reading_minutes: number; created_at: string
           author: { handle: string; display_name: string; ledger_balance: number } | null
           metrics: { upvotes: number; downvotes: number; bookmarks: number; comments: number } | null
         }
         return {
           id: raw.id, title: raw.title, body: raw.body_markdown, filmNumber: raw.film_number, status: raw.status,
-          wordCount: raw.word_count, readingMinutes: raw.reading_minutes, createdAt: raw.created_at,
+          wordCount: raw.word_count, readingMinutes: raw.reading_minutes, createdAt: raw.created_at, continuityNote: raw.continuity_note ?? '',
           author: { handle: raw.author?.handle ?? 'archivist', displayName: raw.author?.display_name ?? 'Archive Writer', ledger: raw.author?.ledger_balance ?? 0 },
           metrics: raw.metrics ?? { upvotes: 0, downvotes: 0, bookmarks: 0, comments: 0 }
         } satisfies Story
@@ -169,10 +175,22 @@ export function App() {
 
   useEffect(() => { void loadFilm(focusedFilm) }, [])
 
+  useEffect(() => {
+    const restore = () => {
+      const parts = window.location.hash.replace(/^#\/?/, '').split('/')
+      const candidate = parts[0] as Page
+      if (['home', 'archive', 'timeline', 'film', 'write', 'desk', 'submitted', 'admin'].includes(candidate)) setPage(candidate)
+      const number = Number(parts[1]); if (candidate === 'film' && number >= 1 && number <= 800) void loadFilm(number)
+    }
+    restore(); window.addEventListener('popstate', restore); window.addEventListener('hashchange', restore)
+    return () => { window.removeEventListener('popstate', restore); window.removeEventListener('hashchange', restore) }
+  }, [])
+
   function openFilm(number: number) {
     setDraft(initialDraft); setDraftId(null); setPreviewing(false)
     void loadFilm(number)
     go('film')
+    window.history.replaceState({ page: 'film', number }, '', `${window.location.pathname}#/film/${number}`)
   }
 
   async function openWriter(number = focusedFilm) {
@@ -201,9 +219,9 @@ export function App() {
     if (!client || !member) { if (!silent) setSignInOpen(true); return null }
     if (!draft.title.trim() && !draft.body.trim()) return draftId
     setDraftSaving(true)
-    const payload = { title: draft.title.trim() || 'Untitled story', body_markdown: draft.body, film_number: focusedFilm, author_id: member.id }
+    const payload = { title: draft.title.trim() || 'Untitled story', body_markdown: draft.body, continuity_note: draft.continuityNote.trim(), film_number: focusedFilm, author_id: member.id }
     const result = draftId
-      ? await client.from('stories').update({ title: payload.title, body_markdown: payload.body_markdown }).eq('id', draftId).select('id').single()
+      ? await client.from('stories').update({ title: payload.title, body_markdown: payload.body_markdown, continuity_note: payload.continuity_note }).eq('id', draftId).select('id').single()
       : await client.from('stories').insert(payload).select('id').single()
     setDraftSaving(false)
     if (result.error) { if (!silent) notify(result.error.message); return null }
@@ -224,11 +242,21 @@ export function App() {
     const client = supabase
     const id = await saveDraft(true)
     if (!client || !id) return
-    const { error } = await client.rpc('submit_story', { p_story_id: id })
+    const { data, error } = await client.rpc('submit_story', { p_story_id: id })
     if (error) { notify(error.message); return }
-    notify('Submitted to the archive.')
-    setDraftId(null); setDraft(initialDraft); go('film'); void loadFilm(focusedFilm)
+    const submitted = data as unknown as Story
+    setLastSubmission({ ...submitted, filmNumber: focusedFilm, body: draft.body, continuityNote: draft.continuityNote, author: member ? { handle: member.handle, displayName: member.displayName, ledger: member.ledger } : { handle: 'writer', displayName: 'Writer', ledger: 0 }, metrics: { upvotes: 0, downvotes: 0, bookmarks: 0, comments: 0 }, wordCount: words(draft.body), readingMinutes: readingTime(words(draft.body)), createdAt: new Date().toISOString() })
+    setDraftId(null); setDraft(initialDraft); void loadMyStories(); go('submitted'); void loadFilm(focusedFilm)
   }
+
+  async function loadMyStories() {
+    if (!supabase || !member) { setMyStories([]); return }
+    const { data, error } = await supabase.from('stories').select('id,title,body_markdown,continuity_note,film_number,status,word_count,reading_minutes,created_at,author:profiles(handle,display_name,ledger_balance),metrics:story_metrics(upvotes,downvotes,bookmarks,comments)').eq('author_id', member.id).order('updated_at', { ascending: false })
+    if (error) { notify(error.message); return }
+    setMyStories((data ?? []).map((entry) => { const raw = entry as unknown as { id:string; title:string; body_markdown:string; continuity_note?:string; film_number:number; status:Story['status']; word_count:number; reading_minutes:number; created_at:string; author:{handle:string;display_name:string;ledger_balance:number}|null; metrics:Story['metrics']|null }; return { id:raw.id,title:raw.title,body:raw.body_markdown,continuityNote:raw.continuity_note ?? '',filmNumber:raw.film_number,status:raw.status,wordCount:raw.word_count,readingMinutes:raw.reading_minutes,createdAt:raw.created_at,author:{handle:raw.author?.handle ?? 'writer',displayName:raw.author?.display_name ?? 'Writer',ledger:raw.author?.ledger_balance ?? 0},metrics:raw.metrics ?? {upvotes:0,downvotes:0,bookmarks:0,comments:0} } }))
+  }
+
+  function openDraft(story: Story) { setFocusedFilm(story.filmNumber); setRemoteFilm(null); setDraft({ title: story.title, body: story.body, continuityNote: story.continuityNote ?? '' }); setDraftId(story.id); go('write') }
 
   async function reactToStory(story: Story, value: 1 | -1) {
     if (!member || !supabase) { setSignInOpen(true); return }
@@ -271,7 +299,8 @@ export function App() {
   const nav = [
     { key: 'archive' as const, label: 'Archive', icon: BookOpen },
     { key: 'timeline' as const, label: 'Timeline', icon: Layers3 },
-    { key: 'write' as const, label: 'Write', icon: PenLine }
+    { key: 'write' as const, label: 'Write', icon: PenLine },
+    { key: 'desk' as const, label: 'My desk', icon: FilePenLine }
   ]
 
   return (
@@ -281,7 +310,7 @@ export function App() {
           <span className="brand-mark">A</span><span>The Accountant <em>Archives</em></span>
         </button>
         <nav className={classNames('main-nav', menuOpen && 'is-open')}>
-          {nav.map(({ key, label, icon: Icon }) => <button key={key} className={page === key ? 'active' : ''} onClick={() => key === 'write' ? void openWriter() : go(key)}><Icon size={16} />{label}</button>)}
+          {nav.map(({ key, label, icon: Icon }) => <button key={key} className={page === key ? 'active' : ''} onClick={() => key === 'write' ? void openWriter() : key === 'desk' ? (member ? (void loadMyStories(), go('desk')) : setSignInOpen(true)) : go(key)}><Icon size={16} />{label}</button>)}
           {member?.role === 'admin' && <button className={page === 'admin' ? 'active' : ''} onClick={() => { go('admin'); void loadModerationQueue() }}><ShieldCheck size={16} />Control room</button>}
         </nav>
         <div className="topbar-actions">
@@ -296,6 +325,8 @@ export function App() {
         {page === 'timeline' && <Timeline eras={eras} focus={timelineFocus} setFocus={setTimelineFocus} onOpenFilm={openFilm} />}
         {page === 'film' && <FilmPage film={currentFilm} stories={stories} loading={filmLoading} onBack={() => go('archive')} onOpenFilm={openFilm} onWrite={() => void openWriter()} onReact={reactToStory} onBookmark={bookmarkStory} />}
         {page === 'write' && <WritingStudio film={currentFilm} draft={draft} setDraft={setDraft} previewing={previewing} setPreviewing={setPreviewing} saving={draftSaving} onSave={() => void saveDraft()} onSubmit={() => void submitDraft()} onBack={() => go('film')} onFormat={insertMarkdown} />}
+        {page === 'desk' && <WritingDesk stories={myStories} onOpenDraft={openDraft} onOpenFilm={openFilm} onWrite={() => void openWriter()} />}
+        {page === 'submitted' && <SubmissionScreen story={lastSubmission} onDesk={() => { void loadMyStories(); go('desk') }} onFilm={() => openFilm(focusedFilm)} />}
         {page === 'admin' && <AdminRoom member={member} eras={eras} setEras={setEras} queue={adminQueue} onModerate={moderate} notify={notify} />}
       </main>
 
@@ -327,8 +358,16 @@ function Home({ onBrowse, onOpenFilm, onWrite }: { onBrowse: () => void; onOpenF
         <button className="feature-card blue" onClick={onWrite}><span className="card-no">03</span><PenLine /><h3>Write with context</h3><p>The writing desk shows the film before and after, so you can keep the thread going.</p><MoveRight /></button>
       </div>
     </section>
+    <CommunityFeed onOpenFilm={onOpenFilm} />
     <section className="era-strip section-wrap"><div><p className="eyebrow"><span /> The chronology</p><h2>Six eras. <i>All still editable.</i></h2></div><div className="mini-timeline">{ERAS.map((era) => <button key={era.slug} style={{ '--era-colour': era.accent, flex: era.end_movie - era.start_movie + 1 } as React.CSSProperties} onClick={() => onOpenFilm(era.start_movie)}><b>{era.name}</b><small>#{era.start_movie}–{era.end_movie}</small></button>)}</div></section>
   </>
+}
+
+function CommunityFeed({ onOpenFilm }: { onOpenFilm: (number: number) => void }) {
+  const [latest, setLatest] = useState<Array<{ id:string; title:string; film_number:number; status:string; created_at:string }>>([])
+  useEffect(() => { if (!supabase) return; void supabase.from('stories').select('id,title,film_number,status,created_at').in('status', ['canon', 'challenger']).order('created_at', { ascending: false }).limit(8).then(({ data }) => setLatest(data ?? [])) }, [])
+  const battles = latest.filter((story) => story.status === 'challenger'); const fresh = latest.filter((story) => story.status === 'canon').slice(0, 4)
+  return <section className="community-feed section-wrap"><div><p className="eyebrow"><span /> The live archive</p><h2>What the group is <i>moving forward.</i></h2></div><div className="feed-columns"><div><header><Gavel size={17} /><b>Canon battles</b></header>{battles.length ? battles.map((story) => <button key={story.id} onClick={() => onOpenFilm(story.film_number)}><small>Movie #{story.film_number} · Vote open</small><b>{story.title}</b><ArrowRight size={15} /></button>) : <p>No active challenges yet. The next alternative story starts one automatically.</p>}</div><div><header><Sparkles size={17} /><b>Newest canon</b></header>{fresh.length ? fresh.map((story) => <button key={story.id} onClick={() => onOpenFilm(story.film_number)}><small>Movie #{story.film_number}</small><b>{story.title}</b><ArrowRight size={15} /></button>) : <p>The first published story will show up here.</p>}</div></div></section>
 }
 
 function Archive({ films, search, setSearch, eraFilter, setEraFilter, onOpenFilm }: { films: Film[]; search: string; setSearch: (value: string) => void; eraFilter: string; setEraFilter: (value: string) => void; onOpenFilm: (number: number) => void }) {
@@ -384,22 +423,35 @@ function FilmPage({ film, stories, loading, onBack, onOpenFilm, onWrite, onReact
     <div className="film-page-nav"><button className="back-button" onClick={onBack}><ArrowLeft size={16} /> Archive</button><div className="film-switcher" aria-label="Browse adjacent films">{film.number > 1 ? <button onClick={() => onOpenFilm(film.number - 1)}><ArrowLeft size={17} /><span><small>Previous film</small><b>#{String(film.number - 1).padStart(3, '0')} · {titleForFilm(film.number - 1)}</b></span></button> : <span className="film-switcher-edge">Beginning of the record</span>}<span className="film-switcher-count">{film.number} / 800</span>{film.number < 800 ? <button onClick={() => onOpenFilm(film.number + 1)}><span><small>Next film</small><b>#{String(film.number + 1).padStart(3, '0')} · {titleForFilm(film.number + 1)}</b></span><ArrowRight size={17} /></button> : <span className="film-switcher-edge">Paid in full</span>}</div></div>
     <div className="film-hero" style={{ '--era-colour': film.era.accent } as React.CSSProperties}><div className="film-label"><span>Movie</span><b>#{String(film.number).padStart(3, '0')}</b></div><div className="film-hero-copy"><p className="eyebrow"><span /> {film.era.name}</p><h1>{film.title}</h1><p>{film.official_description}</p><div className="film-tags"><span>{film.era.start_movie}–{film.era.end_movie} era</span><span>~2h runtime</span><span>Open archive</span></div></div><button className="button primary" onClick={onWrite}><PenLine size={17} />{canon ? 'Challenge canon' : 'Write the first story'}</button></div>
     <div className="film-layout"><aside className="continuity-card"><p className="eyebrow">Continuity</p>{film.number > 1 ? <button onClick={() => onOpenFilm(film.number - 1)}><small>Before</small><b>#{film.number - 1}</b><span>{titleForFilm(film.number - 1)}</span></button> : <div><small>Before</small><b>#—</b><span>No earlier film.</span></div>}<div className="current"><small>Now</small><b>#{film.number}</b><span>{film.title}</span></div>{film.number < 800 ? <button onClick={() => onOpenFilm(film.number + 1)}><small>After</small><b>#{film.number + 1}</b><span>{titleForFilm(film.number + 1)}</span></button> : <div><small>After</small><b>#—</b><span>The series ends here.</span></div>}<hr /><p>{film.era.writing_guidelines}</p></aside>
-      <div className="story-column">{loading ? <div className="loading-card"><LoaderCircle className="spin" />Loading film…</div> : canon ? <StoryCard story={canon} featured onReact={onReact} onBookmark={onBookmark} /> : <EmptyCanon film={film} onWrite={onWrite} />}{challengers.length > 0 && <section className="challenge-stack"><div className="stack-heading"><div><p className="eyebrow"><span /> Current vote</p><h2>Canon is being challenged.</h2></div><span className="vote-window">6d 18h remaining</span></div>{challengers.map((story) => <StoryCard key={story.id} story={story} challenge onReact={onReact} onBookmark={onBookmark} />)}</section>}<section className="archive-note"><LockKeyhole size={17} /><div><b>Nothing is deleted.</b><p>Stories that do not become canon remain available with their revision history.</p></div></section></div>
+      <div className="story-column">{loading ? <div className="loading-card"><LoaderCircle className="spin" />Loading film…</div> : canon ? <><StoryCard story={canon} featured onReact={onReact} onBookmark={onBookmark} /><EditProposalBox story={canon} /></> : <EmptyCanon film={film} onWrite={onWrite} />}{challengers.length > 0 && <section className="challenge-stack"><div className="stack-heading"><div><p className="eyebrow"><span /> Current vote</p><h2>Canon is being challenged.</h2></div><span className="vote-window">6d 18h remaining</span></div>{challengers.map((story) => <StoryCard key={story.id} story={story} challenge onReact={onReact} onBookmark={onBookmark} />)}</section>}<section className="archive-note"><LockKeyhole size={17} /><div><b>Nothing is deleted.</b><p>Stories that do not become canon remain available with their revision history.</p></div></section></div>
     </div>
   </section>
 }
 
 function EmptyCanon({ film, onWrite }: { film: Film; onWrite: () => void }) { return <div className="empty-canon"><div className="empty-stamp">OPEN FILE</div><p className="eyebrow"><span /> No canon yet</p><h2>This film needs its <i>first story.</i></h2><p>Read the brief, check the films on either side, and write the version you think should be here.</p><button className="button primary" onClick={onWrite}>Write movie #{film.number} <ArrowRight size={16} /></button></div> }
 
-function StoryCard({ story, featured = false, challenge = false, onReact, onBookmark }: { story: Story; featured?: boolean; challenge?: boolean; onReact: (story: Story, value: 1 | -1) => void; onBookmark: (story: Story) => void }) {
-  return <article className={classNames('story-card', featured && 'featured', challenge && 'challenge')}><header><div className="story-byline"><span className="avatar">{story.author.displayName.slice(0, 1)}</span><span><b>{story.author.displayName}</b><small>@{story.author.handle} · {relativeDate(story.createdAt)}</small></span></div><span className={classNames('status-badge', story.status)}>{story.status === 'canon' ? <><Check size={13} /> Canon</> : story.status === 'challenger' ? <><Gavel size={13} /> Challenger</> : story.status}</span></header><div className="story-main"><h2>{story.title}</h2><div className="story-meta"><span><Clock3 size={14} /> {story.readingMinutes} min</span><span>{formatNumber(story.wordCount)} words</span><span><Sparkles size={14} /> {formatNumber(story.author.ledger)} ledger</span></div><p className="story-excerpt">{story.body}</p></div><footer><div className="story-votes"><button onClick={() => onReact(story, 1)}><ArrowUp size={16} /> {formatNumber(story.metrics.upvotes)}</button><button onClick={() => onReact(story, -1)}><ArrowDown size={16} /> {formatNumber(story.metrics.downvotes)}</button><button><MessageCircle size={16} /> {formatNumber(story.metrics.comments)}</button></div><button className="icon-button" onClick={() => onBookmark(story)} aria-label="Save story"><Bookmark size={17} /></button></footer></article>
+function EditProposalBox({ story }: { story: Story }) {
+  const [open, setOpen] = useState(false); const [body, setBody] = useState(story.body); const [reason, setReason] = useState(''); const [message, setMessage] = useState(''); const [proposals, setProposals] = useState<Array<{id:string;rationale:string;created_at:string}>>([])
+  async function refresh() { if (!supabase) return; const { data } = await supabase.from('story_edit_proposals').select('id,rationale,created_at').eq('story_id', story.id).eq('status', 'open').order('created_at', { ascending: false }); setProposals(data ?? []) }
+  useEffect(() => { void refresh() }, [story.id])
+  async function propose() { if (!supabase) { setMessage('Sign in to suggest an edit.'); return }; const { data: auth } = await supabase.auth.getUser(); if (!auth.user) { setMessage('Sign in to suggest an edit.'); return }; const { error } = await supabase.from('story_edit_proposals').insert({ story_id: story.id, author_id: auth.user.id, replacement_body_markdown: body, rationale: reason }); setMessage(error ? error.message : 'Edit proposal opened for voting.'); if (!error) { setOpen(false); void refresh() } }
+  async function vote(proposalId: string, value: 1 | -1) { if (!supabase) { setMessage('Sign in to vote.'); return }; const { data: auth } = await supabase.auth.getUser(); if (!auth.user) { setMessage('Sign in to vote.'); return }; const { error } = await supabase.from('story_edit_votes').upsert({ proposal_id: proposalId, user_id: auth.user.id, value }, { onConflict: 'proposal_id,user_id' }); setMessage(error ? error.message : 'Edit vote recorded — +1 ledger.'); }
+  return <section className="edit-proposal"><div><p className="eyebrow"><span /> Improve the record</p><h2>Suggest a targeted edit.</h2><p>Propose a paragraph-level rewrite without replacing the whole story. The group can vote it through.</p></div><button className="button ghost slim" onClick={() => setOpen((value) => !value)}>{open ? 'Close' : 'Suggest an edit'}</button>{open && <div className="proposal-form"><textarea value={body} onChange={(event) => setBody(event.target.value)} aria-label="Proposed story text" /><input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why does this improve the story?" aria-label="Edit rationale" /><button className="button primary slim" onClick={() => void propose()}>Open edit vote <ArrowRight size={15} /></button></div>}{proposals.map((proposal) => <div className="proposal-vote" key={proposal.id}><span><b>Open edit vote</b><small>{proposal.rationale || 'A writer proposed a focused revision.'}</small></span><div><button onClick={() => void vote(proposal.id, 1)}><ArrowUp size={14} /> Support</button><button onClick={() => void vote(proposal.id, -1)}><ArrowDown size={14} /> Keep current</button></div></div>)}{message && <small>{message}</small>}</section>
 }
 
-function WritingStudio({ film, draft, setDraft, previewing, setPreviewing, saving, onSave, onSubmit, onBack, onFormat }: { film: Film; draft: { title: string; body: string }; setDraft: React.Dispatch<React.SetStateAction<{ title: string; body: string }>>; previewing: boolean; setPreviewing: (value: boolean) => void; saving: boolean; onSave: () => void; onSubmit: () => void; onBack: () => void; onFormat: (before: string, after?: string) => void }) {
+function StoryCard({ story, featured = false, challenge = false, onReact, onBookmark }: { story: Story; featured?: boolean; challenge?: boolean; onReact: (story: Story, value: 1 | -1) => void; onBookmark: (story: Story) => void }) {
+  return <article className={classNames('story-card', featured && 'featured', challenge && 'challenge')}><header><div className="story-byline"><span className="avatar">{story.author.displayName.slice(0, 1)}</span><span><b>{story.author.displayName}</b><small>@{story.author.handle} · {relativeDate(story.createdAt)}</small></span></div><span className={classNames('status-badge', story.status)}>{story.status === 'canon' ? <><Check size={13} /> Canon</> : story.status === 'challenger' ? <><Gavel size={13} /> Challenger</> : story.status}</span></header><div className="story-main"><h2>{story.title}</h2><div className="story-meta"><span><Clock3 size={14} /> {story.readingMinutes} min</span><span>{formatNumber(story.wordCount)} words</span><span><Sparkles size={14} /> {formatNumber(story.author.ledger)} ledger</span></div><p className="story-excerpt">{story.body}</p>{story.continuityNote && <aside className="story-handoff"><b>For the next film</b><p>{story.continuityNote}</p></aside>}</div><footer><div className="story-votes"><button onClick={() => onReact(story, 1)}><ArrowUp size={16} /> {formatNumber(story.metrics.upvotes)}</button><button onClick={() => onReact(story, -1)}><ArrowDown size={16} /> {formatNumber(story.metrics.downvotes)}</button><button><MessageCircle size={16} /> {formatNumber(story.metrics.comments)}</button></div><button className="icon-button" onClick={() => onBookmark(story)} aria-label="Save story"><Bookmark size={17} /></button></footer></article>
+}
+
+function WritingStudio({ film, draft, setDraft, previewing, setPreviewing, saving, onSave, onSubmit, onBack, onFormat }: { film: Film; draft: { title: string; body: string; continuityNote: string }; setDraft: React.Dispatch<React.SetStateAction<{ title: string; body: string; continuityNote: string }>>; previewing: boolean; setPreviewing: (value: boolean) => void; saving: boolean; onSave: () => void; onSubmit: () => void; onBack: () => void; onFormat: (before: string, after?: string) => void }) {
   const wordCount = words(draft.body)
   const complete = Math.min(100, Math.round((wordCount / 300) * 100))
-  return <section className="studio"><header className="studio-bar"><button className="back-button" onClick={onBack}><ArrowLeft size={16} /> Movie #{film.number}</button><div className="studio-state">{saving ? <><LoaderCircle className="spin" size={15} /> Saving</> : <><span /> Autosave on</>}</div><div><button className="button slim ghost" onClick={onSave}>Save draft</button><button className="button slim primary" onClick={onSubmit} disabled={wordCount < 300}>Submit to archive <Send size={15} /></button></div></header><div className="studio-layout"><aside className="studio-context"><p className="eyebrow">Your brief</p><div className="current-film"><span style={{ background: film.era.accent }} /> <small>Movie #{String(film.number).padStart(3, '0')}</small><h2>{film.title}</h2><p>{film.official_description}</p></div><div className="context-neighbours"><button><small>PREVIOUS</small><b>#{film.number === 1 ? '—' : film.number - 1}</b><span>{film.number === 1 ? 'No earlier film' : titleForFilm(film.number - 1)}</span></button><button><small>NEXT</small><b>#{film.number === 800 ? '—' : film.number + 1}</b><span>{film.number === 800 ? 'End of series' : titleForFilm(film.number + 1)}</span></button></div><div className="brief-box"><p className="eyebrow">{film.era.name} brief</p><p>{film.era.writing_guidelines}</p></div></aside><div className="editor-area"><div className="editor-top"><div><p className="eyebrow">Start a story</p><input value={draft.title} onChange={(event) => setDraft((old) => ({ ...old, title: event.target.value }))} placeholder="A title for this film" aria-label="Story title" /></div><div className="editor-mode"><button className={!previewing ? 'selected' : ''} onClick={() => setPreviewing(false)}>Write</button><button className={previewing ? 'selected' : ''} onClick={() => setPreviewing(true)}>Preview</button></div></div>{!previewing && <div className="format-bar"><button onClick={() => onFormat('## ')}>H2</button><button onClick={() => onFormat('**', '**')}><b>B</b></button><button onClick={() => onFormat('*', '*')}><i>I</i></button><button onClick={() => onFormat('> ')}>Quote</button><button onClick={() => onFormat('- ')}>List</button><span>Markdown supported</span></div>}{previewing ? <article className="preview-prose"><h1>{draft.title || 'Untitled story'}</h1><p>{draft.body || 'Your story will appear here as readers will see it.'}</p></article> : <textarea id="story-body" value={draft.body} onChange={(event) => setDraft((old) => ({ ...old, body: event.target.value }))} placeholder="Start with the accountant, the debt, or the problem this film introduces." spellCheck /> }<footer className="editor-footer"><div><b>{formatNumber(wordCount)}</b> words · {readingTime(wordCount)} min read<div className="word-meter"><i style={{ width: `${complete}%` }} /></div><small>{wordCount < 300 ? `${300 - wordCount} words until submission` : 'Ready to submit'}</small></div><p>Each save keeps a revision.</p></footer></div></div></section>
+  return <section className="studio"><header className="studio-bar"><button className="back-button" onClick={onBack}><ArrowLeft size={16} /> Movie #{film.number}</button><div className="studio-state">{saving ? <><LoaderCircle className="spin" size={15} /> Saving</> : <><span /> Autosave on</>}</div><div><button className="button slim ghost" onClick={onSave}>Save draft</button><button className="button slim primary" onClick={onSubmit} disabled={wordCount < 300}>Publish story <Send size={15} /></button></div></header><div className="studio-layout"><aside className="studio-context"><p className="eyebrow">Your brief</p><div className="current-film"><span style={{ background: film.era.accent }} /> <small>Movie #{String(film.number).padStart(3, '0')}</small><h2>{film.title}</h2><p>{film.official_description}</p></div><div className="brief-box"><p className="eyebrow">{film.era.name} brief</p><p>{film.era.writing_guidelines}</p></div></aside><div className="editor-area"><div className="editor-top"><div><p className="eyebrow">Start a story</p><input value={draft.title} onChange={(event) => setDraft((old) => ({ ...old, title: event.target.value }))} placeholder="A title for this film" aria-label="Story title" /></div><div className="editor-mode"><button className={!previewing ? 'selected' : ''} onClick={() => setPreviewing(false)}>Write</button><button className={previewing ? 'selected' : ''} onClick={() => setPreviewing(true)}>Preview</button></div></div>{!previewing && <div className="format-bar"><button onClick={() => onFormat('## ')}>H2</button><button onClick={() => onFormat('**', '**')}><b>B</b></button><button onClick={() => onFormat('*', '*')}><i>I</i></button><button onClick={() => onFormat('> ')}>Quote</button><button onClick={() => onFormat('- ')}>List</button><span>Markdown supported</span></div>}{previewing ? <article className="preview-prose"><h1>{draft.title || 'Untitled story'}</h1>{draft.body.split(/\n{2,}/).map((paragraph, index) => paragraph.startsWith('## ') ? <h2 key={index}>{paragraph.slice(3)}</h2> : <p key={index}>{paragraph.replaceAll('**', '').replaceAll('*', '')}</p>)}</article> : <textarea id="story-body" value={draft.body} onChange={(event) => setDraft((old) => ({ ...old, body: event.target.value }))} placeholder="Start with the accountant, the debt, or the problem this film introduces." spellCheck /> }<label className="continuity-note"><span>Hand-off for the next writer <small>Optional · one sentence</small></span><input value={draft.continuityNote} maxLength={360} onChange={(event) => setDraft((old) => ({ ...old, continuityNote: event.target.value }))} placeholder="What should the next film pick up?" /></label><footer className="editor-footer"><div><b>{formatNumber(wordCount)}</b> words · {readingTime(wordCount)} min read<div className="word-meter"><i style={{ width: `${complete}%` }} /></div><small>{wordCount < 300 ? `${300 - wordCount} words until publication` : 'Ready to publish'}</small></div><p>First stories become canon automatically; later stories open a canon challenge.</p></footer></div></div></section>
 }
+
+function WritingDesk({ stories, onOpenDraft, onOpenFilm, onWrite }: { stories: Story[]; onOpenDraft: (story: Story) => void; onOpenFilm: (number: number) => void; onWrite: () => void }) { return <section className="archive section-wrap"><div className="archive-heading"><div><p className="eyebrow"><span /> Your workspace</p><h1>Writing <i>desk.</i></h1><p>Drafts stay here until you publish. Published stories and active challenges are kept together so nothing disappears.</p></div><button className="button primary" onClick={onWrite}><PenLine size={16} /> New story</button></div><div className="desk-list">{stories.length ? stories.map((story) => <article key={story.id} className="desk-card"><span className={classNames('status-badge', story.status)}>{story.status === 'draft' ? 'Draft' : story.status === 'canon' ? 'Canon' : story.status === 'challenger' ? 'Challenge open' : story.status}</span><div><p className="eyebrow">Movie #{story.filmNumber}</p><h2>{story.title}</h2><p>{story.status === 'draft' ? `${formatNumber(story.wordCount)} words · last saved automatically` : `Published · ${formatNumber(story.wordCount)} words`}</p></div><div>{story.status === 'draft' ? <button className="button ghost slim" onClick={() => onOpenDraft(story)}>Continue editing</button> : <button className="button ghost slim" onClick={() => onOpenFilm(story.filmNumber)}>Open film</button>}</div></article>) : <div className="empty-canon"><p className="eyebrow"><span /> Nothing saved yet</p><h2>Your drafts will <i>always live here.</i></h2><button className="button primary" onClick={onWrite}>Write your first one <ArrowRight size={16} /></button></div>}</div></section> }
+
+function SubmissionScreen({ story, onDesk, onFilm }: { story: Story | null; onDesk: () => void; onFilm: () => void }) { const isChallenge = story?.status === 'challenger'; return <section className="submitted-screen section-wrap"><span className="brand-mark">A</span><p className="eyebrow"><span /> Publication recorded</p><h1>{isChallenge ? <>Your challenge is <i>live.</i></> : <>Your story is now <i>canon.</i></>}</h1><p>{isChallenge ? 'Readers can now choose between your version and the current canon. You earned ledger for putting a real alternative on the table.' : 'There was no existing canon, so the archive has published your story immediately. You can still see every revision in your writing desk.'}</p><div><button className="button primary" onClick={onFilm}>Open the film <ArrowRight size={16} /></button><button className="button ghost" onClick={onDesk}>Go to my desk</button></div></section> }
 
 function AdminRoom({ member, eras, setEras, queue, onModerate, notify }: { member: Member | null; eras: Era[]; setEras: React.Dispatch<React.SetStateAction<Era[]>>; queue: Story[]; onModerate: (story: Story, action: 'approve_canon' | 'archive' | 'reject') => void; notify: (message: string) => void }) {
   const [selected, setSelected] = useState(eras[0]?.slug ?? '')
