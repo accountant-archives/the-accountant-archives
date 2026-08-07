@@ -13,9 +13,9 @@ This roadmap keeps the archive stable while it grows. Existing stories, drafts, 
 
 ## Next — facts and moderation
 
-- [~] Add a hierarchical Fact Sheet: the sourced entry and moderation foundation is live; categories, competing citations, and contradiction reports are next.
+- [x] Add a hierarchical Fact Sheet with nested entries, multiple story citations, and contradiction reports.
 - [x] Let established members propose sourced facts; moderators can accept or decline them.
-- Add a complete reporting flow for stories, comments, and later fan art, including moderator removal and an administrator-only restoration area.
+- [~] Add a complete reporting flow: stories can now be reported and moderators can claim, dismiss, or hide reported stories and comments. Restoration and fan-art reports are next.
 - Add mod assignment, supermod oversight, safe point floors, role thresholds, and auditable point adjustments.
 
 ## Community layer
