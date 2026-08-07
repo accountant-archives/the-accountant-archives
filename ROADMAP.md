@@ -4,16 +4,17 @@ This roadmap keeps the archive stable while it grows. Existing stories, drafts, 
 
 ## Now — archive clarity and writing flow
 
-- Show canon titles as the film’s main title, with the official prompt title retained as a smaller record label.
-- Give writers the previous canon hand-off note before they start a film; make the hand-off required for new submissions.
-- Make canon and active challenges unmistakable across the archive, with filters for canon, challenged, and unwritten films plus a newest-canon view.
-- Complete vote, bookmark, comment, and canon-battle feedback without page reloads.
-- Rename the visible “ledger” to **sparkle points**.
+- [x] Show canon titles as the film’s main title, with the official prompt title retained as a smaller record label.
+- [x] Give writers the previous canon hand-off note before they start a film; make the hand-off required for new submissions.
+- [x] Make canon and active challenges unmistakable across the archive, with filters for canon, challenged, and unwritten films plus a newest-canon view.
+- [x] Complete vote, bookmark, comment, and canon-battle feedback without page reloads.
+- [x] Rename the visible “ledger” to **sparkle points**.
+- [x] Add an in-app expanded writing mode for long sessions.
 
 ## Next — facts and moderation
 
-- Add a hierarchical Fact Sheet: categories, nested entries, quoted story references, competing citations, and contradiction reports.
-- Let established members propose facts; moderators accept, decline, or rearrange them.
+- [~] Add a hierarchical Fact Sheet: the sourced entry and moderation foundation is live; categories, competing citations, and contradiction reports are next.
+- [x] Let established members propose sourced facts; moderators can accept or decline them.
 - Add a complete reporting flow for stories, comments, and later fan art, including moderator removal and an administrator-only restoration area.
 - Add mod assignment, supermod oversight, safe point floors, role thresholds, and auditable point adjustments.
 
