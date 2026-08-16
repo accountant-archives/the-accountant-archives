@@ -2,14 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BookOpen, Bookmark, Check, ChevronRight, Clock3,
-  FilePenLine, Flag, Gavel, Grid3X3, Layers3, LoaderCircle, LockKeyhole, Maximize2, Menu, MessageCircle,
+  FilePenLine, Flag, Gavel, Grid3X3, Heart, ImagePlus, Layers3, LoaderCircle, LockKeyhole, Maximize2, Menu, MessageCircle,
   Minimize2,
   MoveRight, PenLine, Search, Send, Settings2, ShieldCheck, Sparkles, Trophy, UserRound, X
 } from 'lucide-react'
 import { ERAS, descriptionForFilm, eraForFilm, filmForNumber, readingTime, titleForFilm, words, type Era, type Film } from './lib/catalogue'
 import { isSupabaseConfigured, signInWithGoogle, supabase } from './lib/supabase'
 
-type Page = 'home' | 'archive' | 'facts' | 'timeline' | 'film' | 'write' | 'desk' | 'submitted' | 'admin'
+type Page = 'home' | 'archive' | 'facts' | 'fanart' | 'timeline' | 'film' | 'write' | 'desk' | 'submitted' | 'admin'
 type Role = 'writer' | 'moderator' | 'admin'
 type Member = { id: string; handle: string; displayName: string; ledger: number; role: Role; avatarUrl?: string | null }
 type PublicProfile = { id: string; handle: string; displayName: string; bio: string; ledger: number; avatarUrl?: string | null; createdAt: string }
@@ -208,7 +208,7 @@ export function App() {
     const restore = () => {
       const parts = window.location.hash.replace(/^#\/?/, '').split('/')
       const candidate = parts[0] as Page
-      if (['home', 'archive', 'facts', 'timeline', 'film', 'write', 'desk', 'submitted', 'admin'].includes(candidate)) setPage(candidate)
+      if (['home', 'archive', 'facts', 'fanart', 'timeline', 'film', 'write', 'desk', 'submitted', 'admin'].includes(candidate)) setPage(candidate)
       const number = Number(parts[1]); if (candidate === 'film' && number >= 1 && number <= 800) void loadFilm(number)
     }
     restore(); window.addEventListener('popstate', restore); window.addEventListener('hashchange', restore)
@@ -346,6 +346,7 @@ export function App() {
   const nav = [
     { key: 'archive' as const, label: 'Archive', icon: BookOpen },
     { key: 'facts' as const, label: 'Fact sheet', icon: Layers3 },
+    { key: 'fanart' as const, label: 'Fan art', icon: ImagePlus },
     { key: 'timeline' as const, label: 'Timeline', icon: Layers3 },
     { key: 'write' as const, label: 'Write', icon: PenLine },
     { key: 'desk' as const, label: 'My desk', icon: FilePenLine }
@@ -371,6 +372,7 @@ export function App() {
         {page === 'home' && <Home onBrowse={() => go('archive')} onOpenFilm={openFilm} onWrite={() => void openWriter(1)} />}
         {page === 'archive' && <Archive films={allFilms} states={filmStates} search={archiveSearch} setSearch={setArchiveSearch} eraFilter={eraFilter} setEraFilter={setEraFilter} onOpenFilm={openFilm} />}
         {page === 'facts' && <FactsPage member={member} />}
+        {page === 'fanart' && <FanArtPage member={member} onSignIn={() => setSignInOpen(true)} onOpenFilm={openFilm} onOpenAuthor={setPublicProfileId} notify={notify} />}
         {page === 'timeline' && <Timeline eras={eras} focus={timelineFocus} setFocus={setTimelineFocus} onOpenFilm={openFilm} />}
         {page === 'film' && <FilmPage film={currentFilm} stories={stories} loading={filmLoading} onBack={() => go('archive')} onOpenFilm={openFilm} onWrite={() => void openWriter()} onReact={reactToStory} onBookmark={bookmarkStory} onOpenAuthor={setPublicProfileId} />}
         {page === 'write' && <WritingStudio film={currentFilm} draft={draft} setDraft={setDraft} previewing={previewing} setPreviewing={setPreviewing} saving={draftSaving} onSave={() => void saveDraft()} onSubmit={() => void submitDraft()} onBack={() => go('film')} onFormat={insertMarkdown} />}
@@ -546,7 +548,7 @@ function LegacyModeratedFactsPage({ member }: { member: Member | null }) {
     if (error || !created) { setMessage(error?.message ?? 'Could not save that fact.'); return }
     const sourceResult = await supabase.from('fact_sources').insert({ fact_id: created.id, story_id: storyId, quoted_text: quote.trim(), note: note.trim() })
     if (sourceResult.error) { setMessage(sourceResult.error.message); return }
-    setTitle(''); setBody(''); setParentId(''); setStoryId(''); setQuote(''); setNote(''); setComposerOpen(false); setMessage('Fact submitted for review.'); void refresh()
+    setTitle(''); setBody(''); setParentId(''); setStoryId(''); setQuote(''); setNote(''); setComposerOpen(false); setMessage('Sourced fact published.'); void refresh()
   }
 
   async function addCitation() {
@@ -843,6 +845,107 @@ function ReportsPanel({ member, notify }: { member: Member; notify: (message: st
   return <section className="moderation-panel report-panel"><div className="stack-heading"><div><p className="eyebrow"><span /> Reports & review</p><h2>{loading ? 'Loading reports…' : reports.length ? `${reports.length} item${reports.length === 1 ? '' : 's'} need attention` : 'Nothing needs attention'}</h2></div><Flag size={18} /></div>{reports.length ? reports.map((report) => { const reporter = reporters.get(report.reporter_id); const story = report.story_id ? stories.get(report.story_id) : null; const comment = report.comment_id ? comments.get(report.comment_id) : null; return <article className="report-item" key={report.id}><header><span className={classNames('fact-status', report.status)}>{report.status === 'reviewing' ? 'In review' : 'Open report'}</span><small>{reporter ? `${reporter.display_name} · @${reporter.handle}` : 'Archive member'} · {relativeDate(report.created_at)}</small></header><b>{story ? `Movie #${String(story.film_number).padStart(3, '0')} · ${story.title}` : comment ? 'Comment report' : 'Archive content'}</b><p>{report.reason}</p>{comment && <blockquote>{comment.body}</blockquote>}<footer>{report.status === 'open' && <button className="button ghost slim" onClick={() => void setStatus(report, 'reviewing')}>Claim review</button>}<button className="button primary slim" onClick={() => void hideContent(report)}>Hide content</button><button className="button ghost slim" onClick={() => void setStatus(report, 'dismissed')}>Dismiss</button></footer></article> }) : !loading && <p className="quiet-copy">Reports from readers will appear here. You can claim, dismiss, or remove the reported content without taking the rest of the archive offline.</p>}</section>
 }
 
+type FanArtStatus = 'pending' | 'approved' | 'rejected'
+type FanArt = {
+  id: string; author_id: string; image_path: string; caption: string; alt_text: string; film_number: number | null
+  safety_status: FanArtStatus; safety_note: string; is_removed: boolean; created_at: string
+  imageUrl?: string; reactions: number; comments: number; viewerReacted?: boolean
+  author: { id: string; handle: string; displayName: string; ledger: number }
+}
+type FanArtComment = { id: string; author_id: string; body: string; created_at: string; author: { handle: string; displayName: string; ledger: number } }
+
+function FanArtPage({ member, onSignIn, onOpenFilm, onOpenAuthor, notify }: { member: Member | null; onSignIn: () => void; onOpenFilm: (number: number) => void; onOpenAuthor: (id: string) => void; notify: (message: string) => void }) {
+  const [artwork, setArtwork] = useState<FanArt[]>([])
+  const [myArtwork, setMyArtwork] = useState<FanArt[]>([])
+  const [selected, setSelected] = useState<FanArt | null>(null)
+  const [showUpload, setShowUpload] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  async function enrich(rows: Array<any>, viewerId?: string) {
+    if (!supabase || !rows.length) return [] as FanArt[]
+    const client = supabase
+    const ids = rows.map((row) => row.id)
+    const authorIds = [...new Set(rows.map((row) => row.author_id))]
+    const [urls, reactionRows, commentRows, viewerRows, profileRows] = await Promise.all([
+      Promise.all(rows.map(async (row) => (await client.storage.from('fan-art').createSignedUrl(row.image_path, 3600)).data?.signedUrl ?? '')),
+      client.from('fan_art_reactions').select('art_id').in('art_id', ids),
+      client.from('fan_art_comments').select('art_id').eq('is_removed', false).in('art_id', ids),
+      viewerId ? client.from('fan_art_reactions').select('art_id').eq('user_id', viewerId).in('art_id', ids) : Promise.resolve({ data: [] as Array<{ art_id: string }> }),
+      client.from('profiles').select('id,handle,display_name,ledger_balance').in('id', authorIds)
+    ])
+    const reactionCounts = new Map<string, number>(); for (const row of reactionRows.data ?? []) reactionCounts.set(row.art_id, (reactionCounts.get(row.art_id) ?? 0) + 1)
+    const commentCounts = new Map<string, number>(); for (const row of commentRows.data ?? []) commentCounts.set(row.art_id, (commentCounts.get(row.art_id) ?? 0) + 1)
+    const reacted = new Set((viewerRows.data ?? []).map((row) => row.art_id))
+    const profiles = new Map((profileRows.data ?? []).map((row) => [row.id, row]))
+    return rows.map((row, index) => ({
+      ...row, imageUrl: urls[index], reactions: reactionCounts.get(row.id) ?? 0, comments: commentCounts.get(row.id) ?? 0, viewerReacted: reacted.has(row.id),
+      author: { id: row.author_id, handle: profiles.get(row.author_id)?.handle ?? 'archive-writer', displayName: profiles.get(row.author_id)?.display_name ?? 'Archive writer', ledger: profiles.get(row.author_id)?.ledger_balance ?? 0 }
+    })) as FanArt[]
+  }
+
+  async function refresh() {
+    if (!supabase) { setLoading(false); return }
+    setLoading(true)
+    const [galleryResult, mineResult] = await Promise.all([
+      supabase.from('fan_art').select('id,author_id,image_path,caption,alt_text,film_number,safety_status,safety_note,is_removed,created_at').eq('safety_status', 'approved').eq('is_removed', false).order('created_at', { ascending: false }),
+      Promise.resolve({ data: [] as Array<any> })
+    ])
+    if (galleryResult.error) notify(galleryResult.error.message)
+    const [gallery, mine] = await Promise.all([enrich(galleryResult.data ?? [], member?.id), enrich(mineResult.data ?? [], member?.id)])
+    setArtwork(gallery); setMyArtwork(mine); setLoading(false)
+  }
+
+  useEffect(() => { void refresh() }, [member?.id])
+
+  async function react(art: FanArt) {
+    if (!member || !supabase) { onSignIn(); return }
+    const result = art.viewerReacted
+      ? await supabase.from('fan_art_reactions').delete().eq('art_id', art.id).eq('user_id', member.id)
+      : await supabase.from('fan_art_reactions').insert({ art_id: art.id, user_id: member.id })
+    if (result.error) { notify(result.error.message); return }
+    const update = (rows: FanArt[]) => rows.map((row) => row.id === art.id ? { ...row, viewerReacted: !art.viewerReacted, reactions: Math.max(0, row.reactions + (art.viewerReacted ? -1 : 1)) } : row)
+    setArtwork(update); if (selected?.id === art.id) setSelected((current) => current ? { ...current, viewerReacted: !art.viewerReacted, reactions: Math.max(0, current.reactions + (art.viewerReacted ? -1 : 1)) } : current)
+  }
+
+  return <section className="fanart-page"><header className="fanart-masthead"><div><p className="eyebrow"><span /> Community gallery</p><h1>What the archive<br /><i>looks like.</i></h1><p>Posters, receipts, close-ups, strange prop work — visual evidence from the 800-film record.</p></div><div className="fanart-masthead-actions"><button className="button primary" onClick={() => member ? setShowUpload(true) : onSignIn()}><ImagePlus size={17} /> Add fan art</button><small>New work appears immediately. Readers can still report anything that does not belong.</small></div></header><div className="fanart-intro"><span><Heart size={16} /> A small, made-by-hand collection</span><p>Link an image to a film when it belongs to one. The rest can sit in the margins.</p></div>{loading ? <div className="loading-card"><LoaderCircle className="spin" /> Loading the gallery…</div> : artwork.length ? <div className="fanart-grid">{artwork.map((art) => <article className="fanart-card" key={art.id}><button className="fanart-image" onClick={() => setSelected(art)} aria-label={`Open ${art.caption}`}><img src={art.imageUrl} alt={art.alt_text} /></button><div className="fanart-card-copy"><div className="fanart-card-meta"><button onClick={() => onOpenAuthor(art.author.id)}>@{art.author.handle}</button><span><Sparkles size={11} /> {formatNumber(art.author.ledger)}</span></div><h2>{art.caption}</h2>{art.film_number && <button className="fanart-film-link" onClick={() => onOpenFilm(art.film_number!)}>Film #{String(art.film_number).padStart(3, '0')} <ArrowRight size={13} /></button>}<footer><button className={classNames('fanart-react', art.viewerReacted && 'selected')} onClick={() => void react(art)} aria-label={art.viewerReacted ? 'Remove reaction' : 'React to artwork'}><Heart size={15} fill={art.viewerReacted ? 'currentColor' : 'none'} /> {art.reactions}</button><button onClick={() => setSelected(art)}><MessageCircle size={15} /> {art.comments}</button></footer></div></article>)}</div> : <div className="fanart-empty"><ImagePlus size={32} /><h2>The gallery is waiting for its first piece.</h2><p>It can be a poster, a strange receipt, a sketch from the Grothkin years — anything that feels at home in the archive.</p>{member && <button className="button primary" onClick={() => setShowUpload(true)}>Add the first image</button>}</div>}{showUpload && <FanArtUpload member={member!} close={() => setShowUpload(false)} onComplete={() => { setShowUpload(false); void refresh() }} notify={notify} />}{selected && <FanArtDetail art={selected} member={member} close={() => setSelected(null)} onReact={() => void react(selected)} onOpenFilm={onOpenFilm} onOpenAuthor={onOpenAuthor} onSignIn={onSignIn} notify={notify} onCommented={() => void refresh()} />}</section>
+}
+
+function FanArtUpload({ member, close, onComplete, notify }: { member: Member; close: () => void; onComplete: () => void; notify: (message: string) => void }) {
+  const [file, setFile] = useState<File | null>(null); const [caption, setCaption] = useState(''); const [alt, setAlt] = useState(''); const [film, setFilm] = useState(''); const [saving, setSaving] = useState(false)
+  async function submit() {
+    if (!supabase || !file) { notify('Choose an image first.'); return }
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']; if (!allowed.includes(file.type)) { notify('Use a JPEG, PNG, WebP, or GIF.'); return }
+    if (file.size > 8 * 1024 * 1024) { notify('Images need to be 8 MB or smaller.'); return }
+    if (caption.trim().length < 3 || alt.trim().length < 3) { notify('Add a short caption and an alt-text description.'); return }
+    const filmNumber = film ? Number(film) : null; if (film && (!Number.isInteger(filmNumber) || filmNumber! < 1 || filmNumber! > 800)) { notify('Film links run from 1 to 800.'); return }
+    setSaving(true); const safeName = file.name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(-90); const key = `${member.id}/${crypto.randomUUID()}-${safeName}`
+    const upload = await supabase.storage.from('fan-art').upload(key, file, { contentType: file.type, upsert: false })
+    if (upload.error) { setSaving(false); notify(upload.error.message); return }
+    const insert = await supabase.from('fan_art').insert({ author_id: member.id, image_path: key, caption: caption.trim(), alt_text: alt.trim(), film_number: filmNumber }).select('id').single()
+    if (insert.error) { await supabase.storage.from('fan-art').remove([key]); setSaving(false); notify(insert.error.message); return }
+    setSaving(false); notify('Added to the gallery.'); onComplete()
+  }
+  return <div className="modal-backdrop" role="presentation" onMouseDown={close}><section className="fanart-upload" role="dialog" aria-modal="true" aria-label="Add fan art" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><p className="eyebrow"><span /> Gallery contribution</p><h2>Put something<br /><i>on the wall.</i></h2><p className="quiet-copy">Keep it yours, keep it safe for the group, and give it enough context for people using a screen reader.</p><label className="fanart-file"><ImagePlus size={22} /><b>{file ? file.name : 'Choose an image'}</b><small>JPEG, PNG, WebP or GIF · up to 8 MB</small><input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label><label>Caption<input value={caption} maxLength={500} placeholder="A title or useful caption" onChange={(event) => setCaption(event.target.value)} /></label><label>Describe the image<input value={alt} maxLength={280} placeholder="What should a reader who cannot see it know?" onChange={(event) => setAlt(event.target.value)} /></label><label>Optional film link<input type="number" min="1" max="800" value={film} placeholder="e.g. 220" onChange={(event) => setFilm(event.target.value)} /></label><button className="button primary" disabled={saving} onClick={() => void submit()}>{saving ? 'Adding…' : 'Add to gallery'} <ArrowRight size={16} /></button></section></div>
+}
+
+function FanArtDetail({ art, member, close, onReact, onOpenFilm, onOpenAuthor, onSignIn, notify, onCommented }: { art: FanArt; member: Member | null; close: () => void; onReact: () => void; onOpenFilm: (number: number) => void; onOpenAuthor: (id: string) => void; onSignIn: () => void; notify: (message: string) => void; onCommented: () => void }) {
+  const [comments, setComments] = useState<FanArtComment[]>([]); const [body, setBody] = useState(''); const [reporting, setReporting] = useState(false); const [reason, setReason] = useState(''); const [saving, setSaving] = useState(false)
+  async function refreshComments() { if (!supabase) return; const { data } = await supabase.from('fan_art_comments').select('id,author_id,body,created_at').eq('art_id', art.id).eq('is_removed', false).order('created_at'); const ids = [...new Set((data ?? []).map((row) => row.author_id))]; const { data: profiles } = ids.length ? await supabase.from('profiles').select('id,handle,display_name,ledger_balance').in('id', ids) : { data: [] as Array<any> }; const profileById = new Map((profiles ?? []).map((row) => [row.id, row])); setComments((data ?? []).map((row) => ({ ...row, author: { handle: profileById.get(row.author_id)?.handle ?? 'archive-writer', displayName: profileById.get(row.author_id)?.display_name ?? 'Archive writer', ledger: profileById.get(row.author_id)?.ledger_balance ?? 0 } }))) }
+  useEffect(() => { void refreshComments() }, [art.id])
+  async function comment() { if (!member || !supabase) { onSignIn(); return }; if (body.trim().length < 2) { notify('Write a little more before posting.'); return }; setSaving(true); const { error } = await supabase.from('fan_art_comments').insert({ art_id: art.id, author_id: member.id, body: body.trim() }); setSaving(false); if (error) { notify(error.message); return }; setBody(''); void refreshComments(); onCommented() }
+  async function report() { if (!member || !supabase) { onSignIn(); return }; if (reason.trim().length < 10) { notify('Please give the review team a little context.'); return }; const { error } = await supabase.from('fan_art_reports').insert({ art_id: art.id, reporter_id: member.id, reason: reason.trim() }); if (error) { notify(error.code === '23505' ? 'You have already flagged this image.' : error.message); return }; setReporting(false); setReason(''); notify('Sent to the review queue.') }
+  return <div className="modal-backdrop fanart-backdrop" role="presentation" onMouseDown={close}><section className="fanart-detail" role="dialog" aria-modal="true" aria-label={art.caption} onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><div className="fanart-detail-image"><img src={art.imageUrl} alt={art.alt_text} /></div><div className="fanart-detail-copy"><div className="fanart-card-meta"><button onClick={() => onOpenAuthor(art.author.id)}>{art.author.displayName} · @{art.author.handle}</button><span><Sparkles size={11} /> {formatNumber(art.author.ledger)}</span></div><h2>{art.caption}</h2>{art.film_number && <button className="fanart-film-link" onClick={() => { close(); onOpenFilm(art.film_number!) }}>Film #{String(art.film_number).padStart(3, '0')} <ArrowRight size={13} /></button>}<div className="fanart-detail-actions"><button className={classNames('fanart-react', art.viewerReacted && 'selected')} onClick={onReact}><Heart size={16} fill={art.viewerReacted ? 'currentColor' : 'none'} /> {art.reactions}</button><button className="text-button" onClick={() => setReporting((value) => !value)}><Flag size={15} /> Report</button></div>{reporting && <div className="fanart-report"><textarea value={reason} maxLength={1000} placeholder="Tell the review team what is wrong." onChange={(event) => setReason(event.target.value)} /><button className="button ghost slim" onClick={() => void report()}>Send report</button></div>}<section className="fanart-comments"><p className="eyebrow"><span /> Discussion</p>{comments.length ? comments.map((comment) => <article key={comment.id}><button onClick={() => onOpenAuthor(comment.author_id)}>{comment.author.displayName} <small>@{comment.author.handle} · <Sparkles size={10} /> {formatNumber(comment.author.ledger)}</small></button><p>{comment.body}</p></article>) : <p className="quiet-copy">No notes in the margin yet.</p>}<div className="fanart-comment-form"><textarea value={body} maxLength={3000} placeholder={member ? 'Leave a note…' : 'Sign in to discuss this piece.'} disabled={!member} onChange={(event) => setBody(event.target.value)} /><button className="button primary slim" disabled={saving} onClick={() => void comment()}>{saving ? 'Posting…' : <Send size={15} />}</button></div></section></div></section></div>
+}
+
+function FanArtReviewPanel({ member, notify }: { member: Member; notify: (message: string) => void }) {
+  const [items, setItems] = useState<FanArt[]>([]); const [reports, setReports] = useState<Map<string, number>>(new Map()); const [loading, setLoading] = useState(true)
+  async function refresh() { if (!supabase) return; const client = supabase; setLoading(true); const [artResult, reportResult] = await Promise.all([client.from('fan_art').select('id,author_id,image_path,caption,alt_text,film_number,safety_status,safety_note,is_removed,created_at').eq('safety_status', 'approved').eq('is_removed', false).order('created_at'), client.from('fan_art_reports').select('art_id').in('status', ['open', 'reviewing'])]); const rows = artResult.data ?? []; const urls = await Promise.all(rows.map(async (row) => (await client.storage.from('fan-art').createSignedUrl(row.image_path, 3600)).data?.signedUrl ?? '')); const profileIds = [...new Set(rows.map((row) => row.author_id))]; const { data: profileRows } = profileIds.length ? await client.from('profiles').select('id,handle,display_name,ledger_balance').in('id', profileIds) : { data: [] as Array<any> }; const profiles = new Map((profileRows ?? []).map((row) => [row.id, row])); setItems(rows.map((row, index) => ({ ...row, imageUrl: urls[index], reactions: 0, comments: 0, author: { id: row.author_id, handle: profiles.get(row.author_id)?.handle ?? 'archive-writer', displayName: profiles.get(row.author_id)?.display_name ?? 'Archive writer', ledger: profiles.get(row.author_id)?.ledger_balance ?? 0 } }))); const counts = new Map<string, number>(); for (const report of reportResult.data ?? []) counts.set(report.art_id, (counts.get(report.art_id) ?? 0) + 1); setReports(counts); setLoading(false) }
+  useEffect(() => { void refresh() }, [])
+  async function decide(art: FanArt) { if (!supabase) return; const { error } = await supabase.from('fan_art').update({ is_removed: true, reviewed_by: member.id, reviewed_at: new Date().toISOString(), safety_note: 'Removed following a community report.' }).eq('id', art.id); if (error) { notify(error.message); return }; await supabase.from('fan_art_reports').update({ status: 'resolved', handled_by: member.id, resolution_note: 'Removed following a community report.' }).eq('art_id', art.id).in('status', ['open', 'reviewing']); notify('Artwork removed from the gallery.'); void refresh() }
+  const reported = items.filter((art) => reports.has(art.id))
+  return <section className="moderation-panel fanart-review"><div className="stack-heading"><div><p className="eyebrow"><span /> Gallery reports</p><h2>{loading ? 'Loading reports…' : reported.length ? `${reported.length} reported image${reported.length === 1 ? '' : 's'} need attention` : 'No gallery reports need attention'}</h2></div><Flag size={18} /></div>{!loading && (reported.length ? <div className="fanart-reports">{reported.map((art) => <article key={art.id}><img src={art.imageUrl} alt="" /><div><b>{art.caption}</b><p>{reports.get(art.id)} open report{reports.get(art.id) === 1 ? '' : 's'} · @{art.author.handle}</p><div className="queue-actions"><button onClick={() => void decide(art)}>Remove from gallery</button></div></div></article>)}</div> : <p className="quiet-copy">Every image appears immediately. This is only for artwork that readers have reported.</p>)}</section>
+}
+
 function LegacyAdminRoom({ member, eras, setEras, queue, onModerate, notify }: { member: Member | null; eras: Era[]; setEras: React.Dispatch<React.SetStateAction<Era[]>>; queue: Story[]; onModerate: (story: Story, action: 'approve_canon' | 'archive' | 'reject') => void; notify: (message: string) => void }) {
   const [tab, setTab] = useState<'eras' | 'reports' | 'members' | 'settings'>('eras')
   const [selected, setSelected] = useState(eras[0]?.slug ?? '')
@@ -855,17 +958,17 @@ function LegacyAdminRoom({ member, eras, setEras, queue, onModerate, notify }: {
 }
 
 function AdminRoom({ member, eras, setEras, notify }: { member: Member | null; eras: Era[]; setEras: React.Dispatch<React.SetStateAction<Era[]>>; queue: Story[]; onModerate: (story: Story, action: 'approve_canon' | 'archive' | 'reject') => void; notify: (message: string) => void }) {
-  const [tab, setTab] = useState<'eras' | 'reports' | 'members' | 'settings'>('reports')
+  const [tab, setTab] = useState<'eras' | 'reports' | 'fanart' | 'members' | 'settings'>('reports')
   const [selected, setSelected] = useState(eras[0]?.slug ?? '')
   const active = eras.find((era) => era.slug === selected) ?? eras[0]
   const [editing, setEditing] = useState(active)
   const isAdmin = member?.role === 'admin'
   const canModerate = isAdmin || member?.role === 'moderator'
-  const tabs: Array<[typeof tab, string]> = isAdmin ? [['eras', 'Era map'], ['reports', 'Reports'], ['members', 'Members'], ['settings', 'Settings']] : [['reports', 'Reports']]
+  const tabs: Array<[typeof tab, string]> = isAdmin ? [['eras', 'Era map'], ['reports', 'Reports'], ['fanart', 'Fan art'], ['members', 'Members'], ['settings', 'Settings']] : [['reports', 'Reports'], ['fanart', 'Fan art']]
   useEffect(() => setEditing(active), [active?.id])
   if (!member || !canModerate) return <section className="restricted section-wrap"><ShieldCheck size={34} /><h1>Moderator access required.</h1><p>This area is for people trusted to keep the record healthy.</p></section>
   async function saveEra() { if (!editing || !supabase) return; const { error } = await supabase.from('eras').update({ name: editing.name, description: editing.description, writing_guidelines: editing.writing_guidelines, accent: editing.accent, start_movie: editing.start_movie, end_movie: editing.end_movie }).eq('id', editing.id); if (error) notify(error.message); else { setEras((all) => all.map((era) => era.id === editing.id ? editing : era)); notify('Era saved.') } }
-  return <section className="admin-room section-wrap"><div className="admin-heading"><div><p className="eyebrow"><span /> {isAdmin ? 'Administrator' : 'Moderator'}</p><h1>Control room.</h1><p>{isAdmin ? 'Set the archive’s structure and keep the community moving.' : 'Review reports and keep the shared record in good shape.'}</p></div><span className="admin-seal"><ShieldCheck /> Verified {isAdmin ? 'administrator' : 'moderator'}</span></div><div className="admin-tabs">{tabs.map(([key, label]) => <button key={key} className={tab === key ? 'selected' : ''} onClick={() => setTab(key)}>{label}</button>)}</div>{tab === 'reports' && <ReportsPanel member={member} notify={notify} />}{isAdmin && tab === 'eras' && <div className="admin-grid"><aside className="era-list">{eras.map((era) => <button key={era.slug} className={selected === era.slug ? 'selected' : ''} onClick={() => { setSelected(era.slug); setEditing(era) }}><i style={{ background: era.accent }} /><span><b>{era.name}</b><small>#{era.start_movie}–#{era.end_movie}</small></span><ChevronRight size={15} /></button>)}</aside>{editing && <div className="era-editor"><div className="editor-heading"><div><p className="eyebrow">Edit era</p><h2>{editing.name}</h2></div><button className="button primary slim" onClick={() => void saveEra()}>Save changes</button></div><label>Name<input value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} /></label><label>Description<textarea value={editing.description} onChange={(event) => setEditing({ ...editing, description: event.target.value })} /></label><label>Writer’s brief<textarea value={editing.writing_guidelines} onChange={(event) => setEditing({ ...editing, writing_guidelines: event.target.value })} /></label><div className="admin-fields"><label>Starts at<input type="number" min="1" max="800" value={editing.start_movie} onChange={(event) => setEditing({ ...editing, start_movie: Number(event.target.value) })} /></label><label>Ends at<input type="number" min="1" max="800" value={editing.end_movie} onChange={(event) => setEditing({ ...editing, end_movie: Number(event.target.value) })} /></label><label>Accent<input type="color" value={editing.accent} onChange={(event) => setEditing({ ...editing, accent: event.target.value })} /></label></div><p className="admin-note"><Settings2 size={15} /> The range and writer brief update the archive’s actual source data.</p></div>}</div>}{isAdmin && tab === 'members' && <section className="moderation-panel"><p className="eyebrow"><span /> Community roles</p><h2>Small group, clear responsibilities.</h2><p className="quiet-copy">Writers can publish, discuss, cite sources, and report problems. Moderators can review reports. Administrators can also shape eras and archive rules.</p></section>}{isAdmin && tab === 'settings' && <section className="moderation-panel"><p className="eyebrow"><span /> Archive rules</p><h2>Publishing stays automatic.</h2><p className="quiet-copy">The first eligible story becomes canon. Later stories open a challenge, while the Control Room steps in only for safety, structure, and genuinely contested records.</p></section>}</section>
+  return <section className="admin-room section-wrap"><div className="admin-heading"><div><p className="eyebrow"><span /> {isAdmin ? 'Administrator' : 'Moderator'}</p><h1>Control room.</h1><p>{isAdmin ? 'Set the archive’s structure and keep the community moving.' : 'Review reports and keep the shared record in good shape.'}</p></div><span className="admin-seal"><ShieldCheck /> Verified {isAdmin ? 'administrator' : 'moderator'}</span></div><div className="admin-tabs">{tabs.map(([key, label]) => <button key={key} className={tab === key ? 'selected' : ''} onClick={() => setTab(key)}>{label}</button>)}</div>{tab === 'reports' && <ReportsPanel member={member} notify={notify} />}{tab === 'fanart' && <FanArtReviewPanel member={member} notify={notify} />}{isAdmin && tab === 'eras' && <div className="admin-grid"><aside className="era-list">{eras.map((era) => <button key={era.slug} className={selected === era.slug ? 'selected' : ''} onClick={() => { setSelected(era.slug); setEditing(era) }}><i style={{ background: era.accent }} /><span><b>{era.name}</b><small>#{era.start_movie}–#{era.end_movie}</small></span><ChevronRight size={15} /></button>)}</aside>{editing && <div className="era-editor"><div className="editor-heading"><div><p className="eyebrow">Edit era</p><h2>{editing.name}</h2></div><button className="button primary slim" onClick={() => void saveEra()}>Save changes</button></div><label>Name<input value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} /></label><label>Description<textarea value={editing.description} onChange={(event) => setEditing({ ...editing, description: event.target.value })} /></label><label>Writer’s brief<textarea value={editing.writing_guidelines} onChange={(event) => setEditing({ ...editing, writing_guidelines: event.target.value })} /></label><div className="admin-fields"><label>Starts at<input type="number" min="1" max="800" value={editing.start_movie} onChange={(event) => setEditing({ ...editing, start_movie: Number(event.target.value) })} /></label><label>Ends at<input type="number" min="1" max="800" value={editing.end_movie} onChange={(event) => setEditing({ ...editing, end_movie: Number(event.target.value) })} /></label><label>Accent<input type="color" value={editing.accent} onChange={(event) => setEditing({ ...editing, accent: event.target.value })} /></label></div><p className="admin-note"><Settings2 size={15} /> The range and writer brief update the archive’s actual source data.</p></div>}</div>}{isAdmin && tab === 'members' && <section className="moderation-panel"><p className="eyebrow"><span /> Community roles</p><h2>Small group, clear responsibilities.</h2><p className="quiet-copy">Writers can publish, discuss, cite sources, and report problems. Moderators can review reports. Administrators can also shape eras and archive rules.</p></section>}{isAdmin && tab === 'settings' && <section className="moderation-panel"><p className="eyebrow"><span /> Archive rules</p><h2>Publishing stays automatic.</h2><p className="quiet-copy">The first eligible story becomes canon. Later stories open a challenge, while the Control Room steps in only for safety, structure, and genuinely contested records.</p></section>}</section>
 }
 
 function SignInSheet({ close, login }: { close: () => void; login: () => void }) { return <div className="modal-backdrop" role="presentation" onMouseDown={close}><section className="sign-in-sheet" role="dialog" aria-modal="true" aria-label="Sign in" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><span className="brand-mark">A</span><p className="eyebrow"><span /> Reader account</p><h2>Join the<br /><i>archive.</i></h2><p>Sign in to write stories, vote on challenges, and keep track of the films you care about.</p><button className="google-button" onClick={login}><b>G</b> Continue with Google</button>{!isSupabaseConfigured && <p className="config-note"><LockKeyhole size={14} /> Add the Supabase URL and publishable key from <code>.env.example</code> to enable Google sign-in.</p>}<small>You can read everything without an account. Sign in when you want to contribute.</small></section></div> }
