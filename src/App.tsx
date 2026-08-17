@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { ERAS, descriptionForFilm, eraForFilm, filmForNumber, readingTime, titleForFilm, words, type Era, type Film } from './lib/catalogue'
 import { isSupabaseConfigured, signInWithGoogle, supabase } from './lib/supabase'
+import { FlameWrap } from './components/FlameWrap'
 
 type Page = 'home' | 'archive' | 'facts' | 'fanart' | 'timeline' | 'film' | 'write' | 'desk' | 'submitted' | 'admin'
 type Role = 'writer' | 'moderator' | 'admin'
@@ -364,7 +365,7 @@ export function App() {
           {(member?.role === 'admin' || member?.role === 'moderator') && <button className={page === 'admin' ? 'active' : ''} onClick={() => { go('admin'); void loadModerationQueue() }}><ShieldCheck size={16} />Control room</button>}
         </nav>
         <div className="topbar-actions">
-          {authLoading ? <LoaderCircle className="spin" size={18} /> : member ? <button className={classNames('member-pill', `rank-${rankFor(member.ledger)}`)} onClick={() => setProfileOpen(true)} title="Open your profile"><span className="avatar">{member.displayName.slice(0, 1)}</span><span><b>{member.handle}</b><small><Sparkles size={12} /> {formatNumber(member.ledger)}</small></span></button> : <button className="sign-in" onClick={() => setSignInOpen(true)}>Sign in <ArrowRight size={16} /></button>}
+          {authLoading ? <LoaderCircle className="spin" size={18} /> : member ? <RankedMemberPill member={member} onOpen={() => setProfileOpen(true)} /> : <button className="sign-in" onClick={() => setSignInOpen(true)}>Sign in <ArrowRight size={16} /></button>}
           <button className="menu-button" onClick={() => setMenuOpen((value) => !value)} aria-label="Open navigation">{menuOpen ? <X /> : <Menu />}</button>
         </div>
       </header>
@@ -420,7 +421,15 @@ function Home({ onBrowse, onOpenFilm, onOpenAuthor, onWrite }: { onBrowse: () =>
 function Leaderboard({ onOpenAuthor }: { onOpenAuthor: (id: string) => void }) {
   const [members, setMembers] = useState<Array<{ id: string; handle: string; display_name: string; ledger_balance: number }>>([])
   useEffect(() => { if (!supabase) return; void supabase.from('profiles').select('id,handle,display_name,ledger_balance').order('ledger_balance', { ascending: false }).order('created_at').limit(10).then(({ data }) => setMembers(data ?? [])) }, [])
-  return <section className="leaderboard section-wrap"><div className="leaderboard-heading"><div><p className="eyebrow"><span /> The ledger board</p><h2>The people keeping<br /><i>the record moving.</i></h2></div><p>Sparkle points reflect useful writing, votes, evidence, and time spent improving the archive.</p></div><div className="leaderboard-list">{members.length ? members.map((member, index) => <button key={member.id} className={classNames('leaderboard-row', `rank-${rankFor(member.ledger_balance)}`)} onClick={() => onOpenAuthor(member.id)}><span className="leaderboard-place">{String(index + 1).padStart(2, '0')}</span><span className="leaderboard-avatar">{member.display_name.slice(0, 1)}</span><span className="contributor-label"><b>{member.display_name}</b><small>@{member.handle}</small></span><span className="leaderboard-score"><Sparkles size={15} /> {formatNumber(member.ledger_balance)}</span></button>) : <div className="leaderboard-empty">The ledger will start filling as the group writes and votes.</div>}</div></section>
+  const flameMembers = members.filter((member) => rankFor(member.ledger_balance) === 'inferno')
+  const standardMembers = members.filter((member) => rankFor(member.ledger_balance) !== 'inferno')
+  const row = (member: typeof members[number]) => <button key={member.id} className={classNames('leaderboard-row', `rank-${rankFor(member.ledger_balance)}`)} onClick={() => onOpenAuthor(member.id)}><span className="leaderboard-place">{String(members.indexOf(member) + 1).padStart(2, '0')}</span><span className="leaderboard-avatar">{member.display_name.slice(0, 1)}</span><span className="contributor-label"><b>{member.display_name}</b><small>@{member.handle}</small></span><span className="leaderboard-score"><Sparkles size={15} /> {formatNumber(member.ledger_balance)}</span></button>
+  return <section className="leaderboard section-wrap"><div className="leaderboard-heading"><div><p className="eyebrow"><span /> The ledger board</p><h2>The people keeping<br /><i>the record moving.</i></h2></div><p>Sparkle points reflect useful writing, votes, evidence, and time spent improving the archive.</p></div><div className="leaderboard-list">{members.length ? <>{flameMembers.length ? <FlameWrap className="leaderboard-flame-wrap" color={[0.96, 0.22, 0.05]} intensity={1.25} height={58} spread={7} radius={12} speed={0.32} scale={0.6} turbulence={0.4} turbulenceScale={0.55} turbulenceReach={13} sparks={0.8} sparkSize={0.3} sparkDensity={0.6} sparkSpeed={0.7} rim={1.5} melt={1.8} distortion={3} smoke={0.25} ember={1.1} scorch={0.1}><div className="leaderboard-flame-group">{flameMembers.map(row)}</div></FlameWrap> : null}{standardMembers.map(row)}</> : <div className="leaderboard-empty">The ledger will start filling as the group writes and votes.</div>}</div></section>
+}
+
+function RankedMemberPill({ member, onOpen }: { member: Member; onOpen: () => void }) {
+  const pill = <button className={classNames('member-pill', `rank-${rankFor(member.ledger)}`)} onClick={onOpen} title="Open your profile"><span className="avatar">{member.displayName.slice(0, 1)}</span><span><b>{member.handle}</b><small><Sparkles size={12} /> {formatNumber(member.ledger)}</small></span></button>
+  return rankFor(member.ledger) === 'inferno' ? <FlameWrap className="member-flame-wrap" color={[0.96, 0.22, 0.05]} intensity={1.1} height={34} spread={5} radius={999} speed={0.28} scale={0.55} turbulence={0.35} turbulenceScale={0.55} turbulenceReach={9} sparks={0.45} sparkSize={0.25} sparkDensity={0.45} sparkSpeed={0.65} rim={1.25} melt={1.25} distortion={2} smoke={0.15} ember={0.9} scorch={0.05}>{pill}</FlameWrap> : pill
 }
 
 function CommunityFeed({ onOpenFilm }: { onOpenFilm: (number: number) => void }) {
