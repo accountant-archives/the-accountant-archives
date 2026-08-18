@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BookOpen, Bookmark, Check, ChevronRight, Clock3,
@@ -74,12 +74,12 @@ function rankFor(points: number) {
   return 'paper'
 }
 
-function FlameFrame({ tier, surface, className, children }: { tier: FlameTier; surface: 'pill' | 'leaderboard' | 'modal'; className: string; children: ReactNode }) {
+function FlameFrame({ tier, surface, className, style, children }: { tier: FlameTier; surface: 'pill' | 'leaderboard' | 'modal'; className: string; style?: CSSProperties; children: ReactNode }) {
   const colour = tier === 'ember' ? [0.95, 0.16, 0.06] as [number, number, number] : tier === 'goldflame' ? [1, 0.68, 0.12] as [number, number, number] : [0.34, 0.19, 0.98] as [number, number, number]
   const isPill = surface === 'pill'
   const isModal = surface === 'modal'
-  const height = isPill ? 30 : isModal ? 64 : tier === 'ember' ? 40 : tier === 'goldflame' ? 49 : 58
-  return <FlameWrap className={classNames(className, `flame-${tier}`)} color={colour} intensity={tier === 'ember' ? 0.82 : tier === 'goldflame' ? 1.35 : 1.65} height={height} spread={isPill ? 5 : isModal ? 10 : 7} radius={isPill ? 999 : 0} speed={tier === 'ember' ? 0.2 : tier === 'goldflame' ? 0.32 : 0.42} scale={tier === 'arcane' ? 0.7 : 0.58} turbulence={tier === 'ember' ? 0.28 : 0.42} turbulenceScale={0.55} turbulenceReach={isPill ? 8 : isModal ? 18 : 13} sparks={tier === 'ember' ? 0.35 : tier === 'goldflame' ? 0.8 : 1.15} sparkSize={0.28} sparkDensity={tier === 'ember' ? 0.45 : tier === 'goldflame' ? 0.65 : 0.85} sparkSpeed={0.7} rim={tier === 'ember' ? 0.9 : tier === 'goldflame' ? 1.35 : 1.65} melt={isModal ? 0 : 1.1} distortion={isModal ? 0 : 2} smoke={tier === 'arcane' ? 0.38 : 0.16} ember={tier === 'ember' ? 0.65 : tier === 'goldflame' ? 1 : 1.25} scorch={0}>{children}</FlameWrap>
+  const height = isPill ? 30 : isModal ? 48 : tier === 'ember' ? 40 : tier === 'goldflame' ? 49 : 58
+  return <FlameWrap className={classNames(className, `flame-${tier}`)} style={style} color={colour} intensity={tier === 'ember' ? 0.82 : tier === 'goldflame' ? 1.35 : 1.65} height={height} spread={isPill ? 5 : isModal ? 5 : 7} radius={isPill ? 999 : 0} speed={tier === 'ember' ? 0.2 : tier === 'goldflame' ? 0.32 : 0.42} scale={tier === 'arcane' ? 0.7 : 0.58} turbulence={tier === 'ember' ? 0.28 : 0.42} turbulenceScale={0.55} turbulenceReach={isPill ? 8 : isModal ? 12 : 13} sparks={tier === 'ember' ? 0.35 : tier === 'goldflame' ? 0.8 : 1.15} sparkSize={0.28} sparkDensity={tier === 'ember' ? 0.45 : tier === 'goldflame' ? 0.65 : 0.85} sparkSpeed={0.7} rim={tier === 'ember' ? 0.9 : tier === 'goldflame' ? 1.35 : 1.65} melt={isModal ? 0 : 1.1} distortion={isModal ? 0 : 2} smoke={tier === 'arcane' ? 0.38 : 0.16} ember={tier === 'ember' ? 0.65 : tier === 'goldflame' ? 1 : 1.25} scorch={0}>{children}</FlameWrap>
 }
 
 function ProfileBio({ points, children }: { points: number; children: ReactNode }) {
@@ -87,10 +87,11 @@ function ProfileBio({ points, children }: { points: number; children: ReactNode 
   return <p className={classNames('profile-bio', tier && `profile-bio-${tier}`)}>{children}</p>
 }
 
-function ProfileModal({ points, children }: { points: number; children: ReactNode }) {
+function ProfileModal({ points, maxWidth, children }: { points: number; maxWidth: string; children: ReactNode }) {
   const tier = flameTierFor(points)
-  return tier ? <FlameFrame tier={tier} surface="modal" className="profile-flame-wrap">{children}</FlameFrame> : <>{children}</>
+  return tier ? <FlameFrame tier={tier} surface="modal" className="profile-flame-wrap" style={{ width: maxWidth, maxWidth: '100%', justifySelf: 'center' }}>{children}</FlameFrame> : <>{children}</>
 }
+
 function relativeDate(value: string) {
   const diff = Math.max(0, Date.now() - new Date(value).getTime())
   const days = Math.floor(diff / 86400000)
@@ -1032,7 +1033,7 @@ function ProfileSheet({ member, close, logout, onSaved }: { member: Member; clos
     {editing ? <div className="profile-editor"><label>Display name<input value={displayName} maxLength={80} onChange={(event) => setDisplayName(event.target.value)} /></label><label>About you<textarea value={bio} maxLength={500} onChange={(event) => setBio(event.target.value)} placeholder="A sentence or two about the kind of record you keep…" /></label><div><button className="button primary slim" disabled={saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save profile'}</button><button className="button ghost slim" onClick={() => setEditing(false)}>Cancel</button></div></div> : <><ProfileBio points={member.ledger}>{bio || 'No note in the margin yet.'}</ProfileBio><button className="text-button profile-edit" onClick={() => setEditing(true)}><FilePenLine size={15} /> Edit profile</button></>}
     <p className="profile-note">Your account keeps your drafts, votes, and stories tied to the archive. Signing out only affects this device.</p>{message && <small className="profile-message">{message}</small>}<button className="profile-logout" onClick={() => { close(); void logout() }}>Sign out <ArrowRight size={16} /></button>
   </section>
-  return <div className="modal-backdrop" role="presentation" onMouseDown={close}><ProfileModal points={member.ledger}>{sheet}</ProfileModal></div>
+  return <div className="modal-backdrop" role="presentation" onMouseDown={close}><ProfileModal points={member.ledger} maxWidth="min(470px, 100%)">{sheet}</ProfileModal></div>
 }
 
 function ContributorProfileSheet({ profileId, close, onOpenFilm }: { profileId: string; close: () => void; onOpenFilm: (film: number) => void }) {
@@ -1042,5 +1043,5 @@ function ContributorProfileSheet({ profileId, close, onOpenFilm }: { profileId: 
     <button className="modal-close" onClick={close}><X size={18} /></button>
     {loading ? <div className="loading-card"><LoaderCircle className="spin" /> Loading contributor…</div> : profile ? <><div className="profile-heading"><span className={classNames('profile-avatar', `rank-${rankFor(profile.ledger)}`)}>{profile.displayName.slice(0, 1)}</span><div><p className="eyebrow"><span /> Contributor</p><h2>{profile.displayName}</h2><p>@{profile.handle}</p></div></div><div className="profile-stats"><div><small>Sparkle points</small><b><Sparkles size={15} /> {formatNumber(profile.ledger)}</b></div><div><small>Published work</small><b><BookOpen size={15} /> {stories.length}</b></div></div><ProfileBio points={profile.ledger}>{profile.bio || 'No note in the margin yet.'}</ProfileBio><section className="contributor-stories"><p className="eyebrow"><span /> Their record</p>{stories.length ? stories.map((story) => <button key={story.id} onClick={() => { close(); onOpenFilm(story.filmNumber) }}><span className={classNames('status-badge', story.status === 'canon' ? 'canon' : 'challenger')}>{story.status === 'canon' ? 'Canon' : story.status === 'challenger' ? 'Challenge' : 'Archived'}</span><div><small>Movie #{String(story.filmNumber).padStart(3, '0')}</small><b>{story.title}</b></div><ChevronRight size={16} /></button>) : <p className="quiet-copy">No published stories in the record yet.</p>}</section></> : <div className="empty-canon"><h2>This contributor is no longer in the record.</h2></div>}
   </section>
-  return <div className="modal-backdrop" role="presentation" onMouseDown={close}><ProfileModal points={profile?.ledger ?? 0}>{sheet}</ProfileModal></div>
+  return <div className="modal-backdrop" role="presentation" onMouseDown={close}><ProfileModal points={profile?.ledger ?? 0} maxWidth="min(540px, 100%)">{sheet}</ProfileModal></div>
 }
